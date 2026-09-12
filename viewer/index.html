@@ -312,14 +312,16 @@ class Player {
     // message bubbles
     const s = ep.trace[Math.min(step, ep.trace.length - 1)];
     if (s && s.sym_eye != null && step < ep.trace.length) {
-      c.font = `${Math.floor(cell * .6)}px system-ui`;
-      c.fillStyle = SYM_COLORS[s.sym_eye]; c.fillText(SYMBOLS[s.sym_eye], x + cell * 1.1, y - cell * .15);
-      c.fillStyle = "rgba(230,232,238,.6)"; c.fillText(SYMBOLS[s.sym_nose], x - cell * .1, y - cell * .15);
+      const fs = Math.floor(cell * .55); c.font = `${fs}px system-ui`;
+      eyeSyms(s).forEach((k, i) => { c.fillStyle = SYM_COLORS[k]; c.fillText(SYMBOLS[k], x + cell * (1.05 + i * .6), y - cell * .15); });
+      c.fillStyle = "rgba(230,232,238,.6)";
+      noseSyms(s).forEach((k, i, all) => c.fillText(SYMBOLS[k], x - cell * (.05 + (all.length - 1 - i) * .6), y - cell * .15));
     }
     const out = step >= ep.trace.length ? ` <span class="badge ${ep.outcome}">${OUT[ep.outcome]}</span>` : "";
     this.q(".status").innerHTML = `шаг ${step} / ${ep.trace.length}${out}`;
+    const colored = ks => ks.map(k => `<span class="sym" style="color:${SYM_COLORS[k]}">${SYMBOLS[k]}</span>`).join("");
     this.q(".msgs").innerHTML = s && s.sym_eye != null
-      ? `Глаз: <span class="sym" style="color:${SYM_COLORS[s.sym_eye]}">${SYMBOLS[s.sym_eye]}</span> · Нос: <span class="sym">${SYMBOLS[s.sym_nose]}</span>`
+      ? `Глаз: ${colored(eyeSyms(s))} · Нос: <span class="sym">${noseSyms(s).map(k => SYMBOLS[k]).join("")}</span>`
       : `${this.data?.level_name || ""}`;
   }
   posAt(step) {
@@ -334,6 +336,8 @@ class Player {
   }
 }
 const OUT = { food: "еда 🍯", trap: "ловушка 💀", timeout: "не успела", running: "…" };
+const eyeSyms = s => [s.sym_eye, s.sym_eye2].filter(v => v != null);
+const noseSyms = s => [s.sym_nose, s.sym_nose2].filter(v => v != null);
 
 const firstGenOfLevel = () => { const L = log[log.length - 1].level; return log.find(r => r.level === L).gen; };
 const root = $("replays"); const a = document.createElement("div"), b = document.createElement("div"); root.append(a, b);
@@ -350,27 +354,38 @@ async function renderLanguage() {
   const d = await replay(genFile(g));
   const eps = d && d.team ? [...d.episodes, ...(d.showcase || [])] : [];
   const moveKeys = ["fwd", "left", "right", "back"];
-  const byMove = SYMBOLS.map(() => Object.fromEntries(moveKeys.map(k => [k, 0])));
-  const byTrap = SYMBOLS.map(() => [0, 0]);
-  for (const e of eps) for (const s of e.trace) {
-    if (s.sym_eye == null) continue;
-    if (byMove[s.sym_eye][s.best_move] != null) byMove[s.sym_eye][s.best_move]++;
-    byTrap[s.sym_eye][s.trap_ahead ? 1 : 0]++;
+  const cell = (v, max) => `<td style="background:rgba(245,184,61,${max ? (v / max) * .7 : 0})">${v}</td>`;
+  const slots = eps.some(e => e.trace.some(s => s.sym_eye2 != null)) ? 2 : 1;
+  const tables = [];
+  for (let slot = 0; slot < slots; slot++) {
+    const key = slot ? "sym_eye2" : "sym_eye";
+    const byMove = SYMBOLS.map(() => Object.fromEntries(moveKeys.map(k => [k, 0])));
+    const byTrap = SYMBOLS.map(() => [0, 0]);
+    for (const e of eps) for (const s of e.trace) {
+      if (s[key] == null) continue;
+      if (byMove[s[key]][s.best_move] != null) byMove[s[key]][s.best_move]++;
+      byTrap[s[key]][s.trap_ahead ? 1 : 0]++;
+    }
+    const maxM = Math.max(1, ...byMove.flatMap(r => Object.values(r))), maxT = Math.max(1, ...byTrap.flat());
+    const head = slots > 1 ? `${slot + 1}-й символ` : "символ";
+    tables.push(`
+      <table class="heat"><tr><th>${head}</th>${moveKeys.map(k => `<th>нужно ${MOVES[k]}</th>`).join("")}</tr>
+        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${moveKeys.map(k => cell(byMove[i][k], maxM)).join("")}</tr>`).join("")}</table>
+      <table class="heat"><tr><th>${head}</th><th>путь чист</th><th>ловушка впереди</th></tr>
+        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${cell(byTrap[i][0], maxT)}${cell(byTrap[i][1], maxT)}</tr>`).join("")}</table>`);
   }
   const last = team[team.length - 1];
-  const cell = (v, max) => `<td style="background:rgba(245,184,61,${max ? (v / max) * .7 : 0})">${v}</td>`;
-  const maxM = Math.max(1, ...byMove.flatMap(r => Object.values(r))), maxT = Math.max(1, ...byTrap.flat());
+  const mi = (v) => v == null ? "—" : v.toFixed(2);
+  const miText = last.mi_trap_pair != null
+    ? `1-й символ: ловушка <b>${mi(last.mi_trap)}</b>, поворот <b>${mi(last.mi_move)}</b> ·
+       2-й: ловушка <b>${mi(last.mi_trap_2)}</b>, поворот <b>${mi(last.mi_move_2)}</b> ·
+       пара целиком: ловушка <b>${mi(last.mi_trap_pair)}</b>, поворот <b>${mi(last.mi_move_pair)}</b>`
+    : `про ловушку впереди <b>${mi(last.mi_trap)}</b>, про нужный поворот <b>${mi(last.mi_move)}</b>`;
   box.innerHTML = `
-    <p class="stat">Сколько символ Глаза говорит о ситуации (взаимная информация, бит):
-      про ловушку впереди <b>${last.mi_trap.toFixed(2)}</b>, про нужный поворот <b>${last.mi_move.toFixed(2)}</b>.
+    <p class="stat">Сколько сообщение Глаза говорит о ситуации (взаимная информация, бит): ${miText}.
       С общением проходят <b>${Math.round(last.success * 100)}%</b>, с заглушённым — <b>${Math.round((last.muted_success ?? 0) * 100)}%</b>.</p>
     <p class="stat">Поколение ${g}: когда Глаз говорит символ, какая была ситуация.</p>
-    <div style="display:flex;gap:24px;flex-wrap:wrap;overflow-x:auto">
-      <table class="heat"><tr><th>символ</th>${moveKeys.map(k => `<th>нужно ${MOVES[k]}</th>`).join("")}</tr>
-        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${moveKeys.map(k => cell(byMove[i][k], maxM)).join("")}</tr>`).join("")}</table>
-      <table class="heat"><tr><th>символ</th><th>путь чист</th><th>ловушка впереди</th></tr>
-        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${cell(byTrap[i][0], maxT)}${cell(byTrap[i][1], maxT)}</tr>`).join("")}</table>
-    </div>`;
+    <div style="display:flex;gap:24px;flex-wrap:wrap;overflow-x:auto">${tables.join("")}</div>`;
 }
 
 refresh(); setInterval(refresh, 5000);

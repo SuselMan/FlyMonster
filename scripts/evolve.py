@@ -58,10 +58,19 @@ def main():
     ckpt = out / "checkpoint.pt"
     if args.resume and ckpt.exists():
         state = torch.load(ckpt, weights_only=False)
+        # Checkpoints from before multi-symbol messages have no stored layout.
+        old_shapes = state.get("shapes") or Policy(wiring.n_pools, slots=1).shapes
+        if old_shapes != policy.shapes:
+            fresh = policy.init(rng)
+            state["theta"] = policy.migrate(state["theta"], old_shapes, fresh)
+            state["m"] = policy.migrate(state["m"], old_shapes, np.zeros(policy.size))
+            state["v"] = policy.migrate(state["v"], old_shapes, np.zeros(policy.size))
+            print(f"migrated parameters: {sum(int(np.prod(s)) for s in old_shapes.values())} -> {policy.size}")
         print(f"resumed at generation {state['gen']}, level {state['level']}")
     else:
         for f in ("log.jsonl", "milestones.jsonl"):
             (out / f).unlink(missing_ok=True)
+    state["shapes"] = policy.shapes
     recent = deque(state["history"][-5:], maxlen=5)
 
     def milestone(key, text, episode=None):
@@ -79,7 +88,8 @@ def main():
         gen, level = state["gen"], LEVELS[state["level"]]
         t0 = time.perf_counter()
         half = args.half_pop
-        noise = rng.normal(0, 1, (half, policy.size))
+        # Only parameters used at this level are explored (e.g. no 2nd symbol before level 3).
+        noise = rng.normal(0, 1, (half, policy.size)) * policy.active_mask(level)
         members = np.concatenate([state["theta"] + args.sigma * noise,
                                   state["theta"] - args.sigma * noise,
                                   state["theta"][None], state["theta"][None]])
@@ -169,17 +179,29 @@ def main():
 
 
 def language_stats(episodes) -> dict:
-    """How much the Eye's symbol tells about the situation (mutual information, bits)."""
-    trap_pairs, move_pairs, symbols = [], [], Counter()
+    """How much the Eye's message tells about the situation (mutual information, bits).
+
+    mi_trap / mi_move are for the first symbol; with two-symbol messages also
+    for the second symbol (_2) and for the whole pair (_pair).
+    """
+    rows = []  # (symbols tuple, trap ahead, best move)
     for e in episodes:
         safe = world.bfs(e.map.grid, e.map.food, blocked=e.map.traps)
         for pos, heading, _, _, sym_eye, _ in e.trace:
-            rays = world.vision(e.map, pos, heading)
-            trap_pairs.append((sym_eye, rays[0].trap_dist is not None and rays[0].trap_dist <= 2))
-            move_pairs.append((sym_eye, best_move(e.map, safe, pos, heading)))
-            symbols[sym_eye] += 1
-    return {"mi_trap": mutual_info(trap_pairs), "mi_move": mutual_info(move_pairs),
-            "symbols": {str(k): v for k, v in sorted(symbols.items())}}
+            fwd = world.vision(e.map, pos, heading)[0]
+            rows.append((sym_eye, fwd.trap_dist is not None and fwd.trap_dist <= 2,
+                         best_move(e.map, safe, pos, heading)))
+    if not rows:
+        return {"mi_trap": 0.0, "mi_move": 0.0, "symbols": {}}
+    out = {"mi_trap": mutual_info([(s[0], t) for s, t, _ in rows]),
+           "mi_move": mutual_info([(s[0], m) for s, _, m in rows]),
+           "symbols": {"".join(map(str, k)): v for k, v in sorted(Counter(s for s, _, _ in rows).items())}}
+    if len(rows[0][0]) > 1:
+        out["mi_trap_2"] = mutual_info([(s[1], t) for s, t, _ in rows])
+        out["mi_move_2"] = mutual_info([(s[1], m) for s, _, m in rows])
+        out["mi_trap_pair"] = mutual_info([(s, t) for s, t, _ in rows])
+        out["mi_move_pair"] = mutual_info([(s, m) for s, _, m in rows])
+    return out
 
 
 def best_move(m, safe_dist, pos, heading) -> str:
@@ -205,9 +227,12 @@ def mutual_info(pairs) -> float:
 def episode_json(e) -> dict:
     safe = world.bfs(e.map.grid, e.map.food, blocked=e.map.traps)
     trace = []
+    slot = lambda syms, i: syms[i] if syms is not None and len(syms) > i else None
     for p, h, a, sn, se, ev in e.trace:
         fwd = world.vision(e.map, p, h)[0]
-        trace.append({"pos": p, "heading": h, "action": a, "sym_nose": sn, "sym_eye": se, "event": ev,
+        trace.append({"pos": p, "heading": h, "action": a,
+                      "sym_nose": slot(sn, 0), "sym_nose2": slot(sn, 1),
+                      "sym_eye": slot(se, 0), "sym_eye2": slot(se, 1), "event": ev,
                       "trap_ahead": fwd.trap_dist is not None and fwd.trap_dist <= 2,
                       "best_move": best_move(e.map, safe, p, h)})
     return {

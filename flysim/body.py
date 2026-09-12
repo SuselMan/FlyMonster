@@ -12,12 +12,18 @@ import torch
 from . import config, connectome
 
 N_SYMBOLS = 4
+MAX_SLOTS = 2   # symbols per message
 RAYS = ("fwd", "left", "right", "back")
 
-NOSE_FEATURES = (["smell_L", "smell_R", "smell_more_L", "smell_more_R", "bump"]
-                 + [f"hear_{k}" for k in range(N_SYMBOLS)])
-EYE_FEATURES = ([f"{ray}_{what}" for ray in RAYS for what in ("open", "trap", "food")]
-                + [f"hear_{k}" for k in range(N_SYMBOLS)])
+
+def hear_name(slot: int, k: int) -> str:
+    return f"hear_{k}" if slot == 0 else f"hear{slot + 1}_{k}"
+
+
+# Hearing features go last, slot by slot, so older parameter vectors stay a prefix.
+HEAR_FEATURES = [hear_name(s, k) for s in range(MAX_SLOTS) for k in range(N_SYMBOLS)]
+NOSE_FEATURES = ["smell_L", "smell_R", "smell_more_L", "smell_more_R", "bump"] + HEAR_FEATURES
+EYE_FEATURES = [f"{ray}_{what}" for ray in RAYS for what in ("open", "trap", "food")] + HEAR_FEATURES
 
 
 @dataclass
@@ -80,11 +86,12 @@ def build(con: connectome.Connectome, group_size: int = 30, n_pools: int = 32,
         eye[f"left_{what}"] = take("eye_L")
         eye[f"right_{what}"] = take("eye_R")
         eye[f"back_{what}"] = take("ocellar", 20)
-    for k in range(N_SYMBOLS):
-        # The same auditory neurons mean the same symbol for both flies.
-        ears = take("auditory", 20)
-        nose[f"hear_{k}"] = ears
-        eye[f"hear_{k}"] = ears
+    for slot in range(MAX_SLOTS):
+        for k in range(N_SYMBOLS):
+            # The same auditory neurons mean the same symbol for both flies.
+            ears = take("auditory", 20)
+            nose[hear_name(slot, k)] = ears
+            eye[hear_name(slot, k)] = ears
 
     pool_of = rng.permutation(np.arange(len(dn)) % n_pools)
     return Wiring({"nose": nose, "eye": eye}, dn, pool_of, n_pools)
