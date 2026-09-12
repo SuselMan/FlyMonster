@@ -1,7 +1,7 @@
 """Check that the whole-brain simulation runs and report its speed.
 
 Stimulates sugar-sensing gustatory neurons and prints the most active neurons.
-Usage: python scripts/smoke_test.py [--ms 100] [--batch 1] [--device cpu]
+Usage: python scripts/smoke_test.py [--ms 100] [--batch 1] [--device cpu] [--dt 0.1]
 """
 import argparse
 import sys
@@ -13,6 +13,7 @@ import torch  # noqa: E402
 
 from flysim import connectome, neurons  # noqa: E402
 from flysim.brain import FlyBrain  # noqa: E402
+from flysim.config import LIFParams  # noqa: E402
 
 
 def main():
@@ -20,6 +21,7 @@ def main():
     ap.add_argument("--ms", type=float, default=100.0)
     ap.add_argument("--batch", type=int, default=1)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--dt", type=float, default=0.1, help="integration step, ms")
     args = ap.parse_args()
 
     t0 = time.perf_counter()
@@ -32,15 +34,19 @@ def main():
     stim = con.indices(i for i in neurons.SUGAR_GRN if i in con.index_of)
     print(f"stimulating {len(stim)} sugar GRNs at 150 Hz")
 
-    brain = FlyBrain(con, batch=args.batch, device=args.device)
-    rate = torch.zeros(con.n, 1, device=brain.device)
-    rate[stim] = 150.0
+    brain = FlyBrain(con, batch=args.batch, device=args.device, params=LIFParams(dt=args.dt))
+    idx = torch.tensor(stim, device=brain.device)
+    rate = torch.full((len(stim), args.batch), 150.0, device=brain.device)
 
     steps = int(args.ms / brain.p.dt)
     counts = torch.zeros(con.n, args.batch, device=brain.device)
+    if brain.device.type == "cuda":
+        torch.cuda.synchronize()
     t0 = time.perf_counter()
     for _ in range(steps):
-        counts += brain.step(rate)
+        counts += brain.step(idx, rate)
+    if brain.device.type == "cuda":
+        torch.cuda.synchronize()
     wall = time.perf_counter() - t0
 
     print(f"device {brain.device}, batch {args.batch}: {args.ms:.0f} ms simulated in {wall:.1f} s "

@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlyMonster</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e8ee; --dim: #8a91a3;
+    --wall: #2b3140; --floor: #11141a; --accent: #f5b83d; --good: #4cc38a; --bad: #e5604d;
+    --blue: #5aa9f0; --violet: #b18cf0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .5px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-bottom: 14px; }
+  .stat { color: var(--dim); } .stat b { color: var(--text); font-weight: 600; }
+  .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-right: 6px; }
+  .live.on { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  select, button, input[type=number] { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+         border-radius: 6px; padding: 5px 9px; font: inherit; }
+  button { cursor: pointer; } button:hover { border-color: var(--dim); }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+  .wide { grid-column: 1 / -1; }
+  canvas { display: block; width: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 12px; height: 3px; margin-right: 5px; vertical-align: middle; }
+  #milestones { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow: auto; }
+  #milestones li { padding: 7px 4px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex; gap: 8px; }
+  #milestones li:hover { background: #1d212a; }
+  #milestones .g { color: var(--accent); min-width: 58px; font-variant-numeric: tabular-nums; }
+  .replays { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .rp .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .rp .info { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; margin-top: 6px; gap: 8px; flex-wrap: wrap; }
+  .badge { padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .badge.food { background: #1f3b2e; color: var(--good); } .badge.trap { background: #3e2220; color: var(--bad); }
+  .badge.timeout { background: #2a2e38; color: var(--dim); }
+  .rp input[type=number] { width: 80px; }
+  .heat { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .heat td, .heat th { padding: 4px 8px; text-align: center; border: 1px solid var(--line); }
+  .heat th { color: var(--dim); font-weight: 500; }
+  .empty { color: var(--dim); padding: 20px 0; }
+  .sym { font-size: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🪰 FlyMonster</h1>
+  <select id="run"></select>
+  <span class="stat"><span id="live" class="live"></span><span id="liveText">—</span></span>
+  <span class="stat">поколение <b id="gen">—</b></span>
+  <span class="stat">уровень <b id="level">—</b></span>
+  <span class="stat"><b id="speed">—</b> с/поколение</span>
+</header>
+
+<div class="grid">
+  <section class="panel">
+    <h2>Прогресс</h2>
+    <canvas id="chart" height="300"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--good)"></i>проходят карты (основная пара, среднее за 10)</span>
+      <span><i style="background:var(--blue)"></i>вся популяция</span>
+      <span><i style="background:var(--bad)"></i>умерли на ловушке</span>
+      <span><i style="background:var(--violet)"></i>с заглушённым общением</span>
+      <span>★ вехи · клик по графику — повтор поколения</span>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Вехи</h2>
+    <ul id="milestones"><li class="empty">пока нет</li></ul>
+  </section>
+
+  <section class="panel wide">
+    <h2>Повторы</h2>
+    <div class="replays" id="replays"></div>
+  </section>
+
+  <section class="panel wide">
+    <h2>Язык</h2>
+    <div id="lang" class="empty">Появится на уровне 3, когда мухи начнут работать в паре.</div>
+  </section>
+</div>
+
+<script>
+const SYMBOLS = ["◆", "▲", "●", "■"];
+const SYM_COLORS = ["#f5b83d", "#5aa9f0", "#4cc38a", "#e56bb0"];
+const MOVES = { fwd: "вперёд", left: "налево", right: "направо", back: "назад", none: "—" };
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+let run = null, log = [], milestones = [], status = null;
+const replayCache = new Map();
+
+async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); }
+async function getJSONL(url) {
+  const r = await fetch(url); if (!r.ok) return [];
+  return (await r.text()).split("\n").filter(Boolean).map(l => JSON.parse(l));
+}
+async function replay(name) {
+  if (!replayCache.has(name)) replayCache.set(name, getJSON(`/results/${run}/replays/${name}`).catch(() => null));
+  return replayCache.get(name);
+}
+const genFile = g => `gen_${String(g).padStart(5, "0")}.json`;
+
+// ---------- data polling ----------
+async function refresh() {
+  const runs = await getJSON("/api/runs").catch(() => []);
+  const sel = $("run");
+  if (sel.options.length !== runs.length) {
+    sel.innerHTML = runs.map(r => `<option>${r.name}</option>`).join("");
+    const newest = runs.slice().sort((a, b) => (b.time || 0) - (a.time || 0))[0];
+    if (!run && newest) run = newest.name;
+    sel.value = run;
+  }
+  if (!run) return;
+  status = runs.find(r => r.name === run) || null;
+  log = await getJSONL(`/results/${run}/log.jsonl`);
+  milestones = await getJSONL(`/results/${run}/milestones.jsonl`);
+  renderHeader(); drawChart(); renderMilestones(); renderLanguage();
+  players.forEach(p => p.onData());
+}
+$("run").onchange = e => { run = e.target.value; replayCache.clear(); players.forEach(p => p.reset()); refresh(); };
+
+function renderHeader() {
+  const last = log[log.length - 1];
+  const age = status?.time ? (Date.now() / 1000 - status.time) : Infinity;
+  const alive = age < Math.max(60, 3 * (status?.seconds || 0));
+  $("live").classList.toggle("on", alive);
+  $("liveText").textContent = alive ? "обучается" : (last ? "остановлено" : "нет данных");
+  $("gen").textContent = last ? `${last.gen}${status?.gens ? " / " + status.gens : ""}` : "—";
+  $("level").textContent = last ? last.level_name : "—";
+  $("speed").textContent = last ? last.seconds : "—";
+}
+
+// ---------- chart ----------
+const chart = $("chart");
+let chartGeom = null, hoverGen = null;
+function smooth(arr, k) {
+  return arr.map((_, i) => { const s = arr.slice(Math.max(0, i - k + 1), i + 1).filter(v => v != null);
+    return s.length ? s.reduce((a, b) => a + b, 0) / s.length : null; });
+}
+function drawChart() {
+  const dpr = devicePixelRatio || 1, W = chart.clientWidth, H = 300;
+  chart.width = W * dpr; chart.height = H * dpr;
+  const c = chart.getContext("2d"); c.scale(dpr, dpr); c.clearRect(0, 0, W, H);
+  const pad = { l: 38, r: 10, t: 16, b: 24 }, w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const n = Math.max(log.length, 2);
+  const x = i => pad.l + (i / (n - 1)) * w, y = v => pad.t + (1 - v) * h;
+  chartGeom = { pad, w, n };
+  c.font = "11px system-ui"; c.fillStyle = css("--dim"); c.strokeStyle = css("--line"); c.lineWidth = 1;
+  for (const v of [0, .25, .5, .75, 1]) {
+    c.beginPath(); c.moveTo(pad.l, y(v)); c.lineTo(W - pad.r, y(v)); c.stroke();
+    c.fillText(`${v * 100}%`, 4, y(v) + 4);
+  }
+  if (!log.length) return;
+  // level boundaries
+  log.forEach((r, i) => { if (i && r.level !== log[i - 1].level) {
+    c.strokeStyle = css("--accent"); c.setLineDash([4, 4]); c.beginPath(); c.moveTo(x(i), pad.t); c.lineTo(x(i), H - pad.b); c.stroke(); c.setLineDash([]);
+    c.fillStyle = css("--accent"); c.fillText(`ур. ${r.level + 1}`, x(i) + 4, pad.t + 10);
+  }});
+  // raw success dots
+  c.fillStyle = "rgba(76,195,138,.25)";
+  log.forEach((r, i) => { c.beginPath(); c.arc(x(i), y(r.success), 1.6, 0, 7); c.fill(); });
+  const line = (vals, color, width = 2) => {
+    c.strokeStyle = color; c.lineWidth = width; c.beginPath(); let started = false;
+    vals.forEach((v, i) => { if (v == null) { started = false; return; } started ? c.lineTo(x(i), y(v)) : c.moveTo(x(i), y(v)); started = true; });
+    c.stroke();
+  };
+  line(smooth(log.map(r => r.pop_success), 10), css("--blue"), 1.5);
+  line(smooth(log.map(r => r.trap), 10), css("--bad"), 1.5);
+  line(smooth(log.map(r => r.muted_success ?? null), 10), css("--violet"), 1.5);
+  line(smooth(log.map(r => r.success), 10), css("--good"), 2.5);
+  // milestones
+  c.fillStyle = css("--accent"); c.font = "14px system-ui";
+  for (const m of milestones) { const i = log.findIndex(r => r.gen === m.gen); if (i >= 0) c.fillText("★", x(i) - 5, pad.t + 2); }
+  c.font = "11px system-ui"; c.fillStyle = css("--dim");
+  c.fillText(`${log[0].gen}`, pad.l, H - 6); c.fillText(`${log[log.length - 1].gen}`, W - pad.r - 24, H - 6);
+  if (hoverGen != null && log[hoverGen]) {
+    const r = log[hoverGen]; c.strokeStyle = css("--dim"); c.beginPath(); c.moveTo(x(hoverGen), pad.t); c.lineTo(x(hoverGen), H - pad.b); c.stroke();
+    const txt = `пок. ${r.gen}: прошли ${Math.round(r.success * 100)}%, популяция ${Math.round(r.pop_success * 100)}%, ловушки ${Math.round(r.trap * 100)}%`;
+    c.fillStyle = css("--text"); c.fillText(txt, Math.min(x(hoverGen) + 6, W - 330), H - pad.b - 8);
+  }
+}
+function chartIndex(ev) {
+  if (!chartGeom) return null; const rect = chart.getBoundingClientRect();
+  const i = Math.round(((ev.clientX - rect.left - chartGeom.pad.l) / chartGeom.w) * (chartGeom.n - 1));
+  return Math.max(0, Math.min(log.length - 1, i));
+}
+chart.onmousemove = ev => { hoverGen = chartIndex(ev); drawChart(); };
+chart.onmouseleave = () => { hoverGen = null; drawChart(); };
+chart.onclick = ev => { const i = chartIndex(ev); if (i != null && log[i]) players[1].show(log[i].gen, "map", 0); };
+addEventListener("resize", () => { drawChart(); players.forEach(p => p.draw()); });
+
+function renderMilestones() {
+  const ul = $("milestones");
+  if (!milestones.length) { ul.innerHTML = `<li class="empty">пока нет</li>`; return; }
+  ul.innerHTML = milestones.slice().reverse().map((m, k) =>
+    `<li data-k="${milestones.length - 1 - k}"><span class="g">пок. ${m.gen}</span><span>${translate(m)}</span></li>`).join("");
+  ul.querySelectorAll("li").forEach(li => li.onclick = () => {
+    const m = milestones[+li.dataset.k];
+    m.replay ? players[1].showFile(m.replay, m.gen) : players[1].show(m.gen, "map", 0);
+  });
+}
+function translate(m) {
+  const L = m.level + 1, k = m.key;
+  if (k.endsWith("first_food_any")) return `ур. ${L}: какая-то муха впервые дошла до еды ▶`;
+  if (k.endsWith("center_food")) return `ур. ${L}: основная пара впервые прошла карту ▶`;
+  if (k.includes("_success_")) return `ур. ${L}: проходят ${k.split("_").pop()}% карт`;
+  if (k.endsWith("comm_matters")) return `ур. ${L}: без общения проходят заметно хуже — язык работает!`;
+  if (k.startsWith("level_")) return `новый уровень: ${m.text.replace("level up: ", "")}`;
+  return m.text;
+}
+
+// ---------- replay player ----------
+class Player {
+  constructor(root, title, pickDefault) {
+    this.pickDefault = pickDefault; this.data = null; this.ep = null; this.t = 0; this.playing = true; this.speed = 4;
+    this.kind = "showcase"; this.idx = 0; this.gen = null; this.follow = true; this.file = null;
+    root.innerHTML = `
+      <div class="rp">
+        <div class="bar"><b>${title}</b>
+          <label>пок. <input type="number" min="0" class="gen"></label>
+          <button class="follow">последнее</button>
+          <select class="ep"></select>
+          <button class="play">⏸</button>
+          <select class="spd"><option value="2">×0.5</option><option value="4" selected>×1</option><option value="8">×2</option><option value="16">×4</option></select>
+        </div>
+        <canvas height="360"></canvas>
+        <div class="info"><span class="status">—</span><span class="msgs"></span></div>
+      </div>`;
+    this.q = s => root.querySelector(s);
+    this.canvas = this.q("canvas");
+    this.q(".gen").onchange = e => { this.follow = false; this.show(+e.target.value, this.kind, this.idx); };
+    this.q(".follow").onclick = () => { this.follow = !this.follow; this.onData(); this.syncButtons(); };
+    this.q(".ep").onchange = e => { const [k, i] = e.target.value.split(":"); this.show(this.gen, k, +i); };
+    this.q(".play").onclick = () => { this.playing = !this.playing; if (this.playing && this.ep && this.t >= this.ep.trace.length) this.t = 0; this.syncButtons(); };
+    this.q(".spd").onchange = e => this.speed = +e.target.value;
+    this.syncButtons();
+  }
+  reset() { this.data = null; this.ep = null; this.gen = null; this.follow = true; }
+  syncButtons() { this.q(".follow").classList.toggle("on", this.follow); this.q(".play").textContent = this.playing ? "⏸" : "▶"; }
+  onData() {
+    if (!log.length) return;
+    const g = this.follow ? this.pickDefault() : this.gen;
+    if (g !== this.gen || !this.data) this.show(g, this.kind, this.idx, true);
+  }
+  async show(gen, kind, idx, auto = false) {
+    if (gen == null) return;
+    if (!auto) this.follow = false;
+    const d = await replay(genFile(gen)); if (!d) return;
+    this.file = null; this.gen = gen; this.data = d; this.kind = kind; this.idx = idx;
+    this.q(".gen").value = gen;
+    const opts = [...(d.showcase || []).map((e, i) => [`showcase:${i}`, `витрина ${i + 1}`, e]),
+                  ...d.episodes.map((e, i) => [`map:${i}`, `карта ${i + 1}`, e])];
+    this.q(".ep").innerHTML = opts.map(([v, l, e]) => `<option value="${v}">${l} · ${OUT[e.outcome]}</option>`).join("");
+    const key = `${kind}:${idx}`; this.q(".ep").value = opts.some(o => o[0] === key) ? key : opts[0][0];
+    const [k, i] = this.q(".ep").value.split(":");
+    this.ep = (k === "showcase" ? d.showcase : d.episodes)[+i]; this.t = 0; this.playing = true;
+    this.syncButtons(); this.draw();
+  }
+  async showFile(file, gen) {
+    const d = await replay(file); if (!d) return;
+    this.follow = false; this.gen = gen; this.data = d; this.ep = d.episodes[0]; this.t = 0; this.playing = true;
+    this.q(".gen").value = gen; this.q(".ep").innerHTML = `<option>веха · ${OUT[this.ep.outcome]}</option>`;
+    this.syncButtons(); this.draw();
+  }
+  tick() {
+    if (!this.ep || !this.playing) return;
+    this.t += this.speed / 16;
+    if (this.t >= this.ep.trace.length + 6) { this.t = 0; }
+    this.draw();
+  }
+  draw() {
+    const cv = this.canvas, ep = this.ep, dpr = devicePixelRatio || 1;
+    const W = cv.clientWidth; if (!W) return;
+    if (!ep) { cv.width = W * dpr; return; }
+    const rows = ep.grid.length, cols = ep.grid[0].length, cell = Math.floor(Math.min(W / cols, 520 / rows));
+    const H = rows * cell; cv.style.height = H + "px"; cv.width = W * dpr; cv.height = H * dpr;
+    const c = cv.getContext("2d"); c.scale(dpr, dpr); const ox = Math.floor((W - cols * cell) / 2);
+    const px = (r, cc) => [ox + cc * cell, r * cell];
+    for (let r = 0; r < rows; r++) for (let cc = 0; cc < cols; cc++) {
+      c.fillStyle = ep.grid[r][cc] ? css("--wall") : css("--floor"); const [x, y] = px(r, cc); c.fillRect(x, y, cell, cell);
+    }
+    const step = Math.min(Math.floor(this.t), ep.trace.length);
+    // trail
+    c.strokeStyle = "rgba(245,184,61,.35)"; c.lineWidth = Math.max(2, cell / 6); c.lineJoin = "round"; c.beginPath();
+    for (let i = 0; i <= step && i < ep.trace.length; i++) { const [x, y] = px(...ep.trace[i].pos); i ? c.lineTo(x + cell / 2, y + cell / 2) : c.moveTo(x + cell / 2, y + cell / 2); }
+    const endPos = this.posAt(step); { const [x, y] = px(...endPos); c.lineTo(x + cell / 2, y + cell / 2); } c.stroke();
+    c.textAlign = "center"; c.textBaseline = "middle"; c.font = `${Math.floor(cell * .75)}px system-ui`;
+    const [fx, fy] = px(...ep.food); c.fillText("🍯", fx + cell / 2, fy + cell / 2 + 1);
+    for (const t of ep.traps) { const [x, y] = px(...t); c.fillText("💀", x + cell / 2, y + cell / 2 + 1); }
+    // fly
+    const cur = ep.trace[Math.min(step, ep.trace.length - 1)] || { heading: 0 };
+    const heading = step >= ep.trace.length ? this.headingAfter() : cur.heading;
+    const [x, y] = px(...endPos); c.save(); c.translate(x + cell / 2, y + cell / 2); c.rotate(heading * Math.PI / 2);
+    c.fillStyle = step >= ep.trace.length && ep.outcome === "trap" ? css("--bad") : css("--accent");
+    c.beginPath(); c.moveTo(0, -cell * .38); c.lineTo(cell * .3, cell * .3); c.lineTo(-cell * .3, cell * .3); c.closePath(); c.fill(); c.restore();
+    // message bubbles
+    const s = ep.trace[Math.min(step, ep.trace.length - 1)];
+    if (s && s.sym_eye != null && step < ep.trace.length) {
+      c.font = `${Math.floor(cell * .6)}px system-ui`;
+      c.fillStyle = SYM_COLORS[s.sym_eye]; c.fillText(SYMBOLS[s.sym_eye], x + cell * 1.1, y - cell * .15);
+      c.fillStyle = "rgba(230,232,238,.6)"; c.fillText(SYMBOLS[s.sym_nose], x - cell * .1, y - cell * .15);
+    }
+    const out = step >= ep.trace.length ? ` <span class="badge ${ep.outcome}">${OUT[ep.outcome]}</span>` : "";
+    this.q(".status").innerHTML = `шаг ${step} / ${ep.trace.length}${out}`;
+    this.q(".msgs").innerHTML = s && s.sym_eye != null
+      ? `Глаз: <span class="sym" style="color:${SYM_COLORS[s.sym_eye]}">${SYMBOLS[s.sym_eye]}</span> · Нос: <span class="sym">${SYMBOLS[s.sym_nose]}</span>`
+      : `${this.data?.level_name || ""}`;
+  }
+  posAt(step) {
+    const tr = this.ep.trace; if (step < tr.length) return tr[step].pos;
+    const last = tr[tr.length - 1]; if (!last) return [0, 0];
+    if (["move", "food", "trap"].includes(last.event)) { const d = [[-1, 0], [0, 1], [1, 0], [0, -1]][last.heading]; return [last.pos[0] + d[0], last.pos[1] + d[1]]; }
+    return last.pos;
+  }
+  headingAfter() {
+    const last = this.ep.trace[this.ep.trace.length - 1]; if (!last) return 0;
+    return last.action === 1 ? (last.heading + 3) % 4 : last.action === 2 ? (last.heading + 1) % 4 : last.heading;
+  }
+}
+const OUT = { food: "еда 🍯", trap: "ловушка 💀", timeout: "не успела", running: "…" };
+
+const firstGenOfLevel = () => { const L = log[log.length - 1].level; return log.find(r => r.level === L).gen; };
+const root = $("replays"); const a = document.createElement("div"), b = document.createElement("div"); root.append(a, b);
+const players = [new Player(a, "Раньше", firstGenOfLevel), new Player(b, "Сейчас", () => log[log.length - 1].gen)];
+setInterval(() => players.forEach(p => p.tick()), 1000 / 16);
+
+// ---------- language ----------
+async function renderLanguage() {
+  const team = log.filter(r => r.mi_trap != null);
+  const box = $("lang");
+  if (!team.length) { box.className = "empty"; box.textContent = "Появится на уровне 3, когда мухи начнут работать в паре."; return; }
+  box.className = "";
+  const g = players[1].gen ?? team[team.length - 1].gen;
+  const d = await replay(genFile(g));
+  const eps = d && d.team ? [...d.episodes, ...(d.showcase || [])] : [];
+  const moveKeys = ["fwd", "left", "right", "back"];
+  const byMove = SYMBOLS.map(() => Object.fromEntries(moveKeys.map(k => [k, 0])));
+  const byTrap = SYMBOLS.map(() => [0, 0]);
+  for (const e of eps) for (const s of e.trace) {
+    if (s.sym_eye == null) continue;
+    if (byMove[s.sym_eye][s.best_move] != null) byMove[s.sym_eye][s.best_move]++;
+    byTrap[s.sym_eye][s.trap_ahead ? 1 : 0]++;
+  }
+  const last = team[team.length - 1];
+  const cell = (v, max) => `<td style="background:rgba(245,184,61,${max ? (v / max) * .7 : 0})">${v}</td>`;
+  const maxM = Math.max(1, ...byMove.flatMap(r => Object.values(r))), maxT = Math.max(1, ...byTrap.flat());
+  box.innerHTML = `
+    <p class="stat">Сколько символ Глаза говорит о ситуации (взаимная информация, бит):
+      про ловушку впереди <b>${last.mi_trap.toFixed(2)}</b>, про нужный поворот <b>${last.mi_move.toFixed(2)}</b>.
+      С общением проходят <b>${Math.round(last.success * 100)}%</b>, с заглушённым — <b>${Math.round((last.muted_success ?? 0) * 100)}%</b>.</p>
+    <p class="stat">Поколение ${g}: когда Глаз говорит символ, какая была ситуация.</p>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;overflow-x:auto">
+      <table class="heat"><tr><th>символ</th>${moveKeys.map(k => `<th>нужно ${MOVES[k]}</th>`).join("")}</tr>
+        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${moveKeys.map(k => cell(byMove[i][k], maxM)).join("")}</tr>`).join("")}</table>
+      <table class="heat"><tr><th>символ</th><th>путь чист</th><th>ловушка впереди</th></tr>
+        ${SYMBOLS.map((s, i) => `<tr><th class="sym" style="color:${SYM_COLORS[i]}">${s}</th>${cell(byTrap[i][0], maxT)}${cell(byTrap[i][1], maxT)}</tr>`).join("")}</table>
+    </div>`;
+}
+
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
