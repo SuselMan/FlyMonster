@@ -27,7 +27,9 @@ class Level:
 
 LEVELS = [
     Level("1 nose alone, tiny maze", world.MazeConfig(3, 3, loops=0.3, n_traps=0, min_food_dist=4), False, 30),
-    Level("2 nose alone, small maze", world.MazeConfig(5, 5, loops=0.3, n_traps=0, min_food_dist=8), False, 50),
+    # Smell goes through walls, so alone the Nose only knows direction, not the route;
+    # from here on the Eye (who sees corridors) has a reason to talk.
+    Level("2 team, small maze", world.MazeConfig(5, 5, loops=0.3, n_traps=0, min_food_dist=8), True, 50),
     Level("3 team, traps", world.MazeConfig(5, 5, loops=0.3, n_traps=2, min_food_dist=8), True, 50),
     Level("4 team, big maze", world.MazeConfig(8, 8, loops=0.2, n_traps=4, min_food_dist=10), True, 80),
 ]
