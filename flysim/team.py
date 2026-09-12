@@ -152,10 +152,10 @@ class Runner:
         self.brain = None
 
     def _brain(self, batch: int) -> FlyBrain:
-        if self.brain is None or self.brain.batch != batch:
+        if self.brain is None:
             self.brain = FlyBrain(self.con, batch=batch, params=self.params, device=self.device)
         else:
-            self.brain.reset()
+            self.brain.resize(batch)
         return self.brain
 
     @torch.no_grad()
@@ -183,47 +183,63 @@ class Runner:
             hear_on[mute_hearing.to(self.device)] = 0.0
         n_hear = len(body.HEAR_FEATURES)
 
-        def heard(symbols):
-            """(E, slots) partner symbols -> (E, n_hear) one-hot hearing features."""
-            out = torch.zeros(E, n_hear, device=self.device)
+        def heard(symbols, live_t):
+            """(E, slots) partner symbols -> (L, n_hear) one-hot hearing features for live episodes."""
+            out = torch.zeros(len(live_t), n_hear, device=self.device)
             if team:
                 for s in range(slots):
-                    out[:, s * k:(s + 1) * k] = torch.nn.functional.one_hot(symbols[:, s], k) * hear_on
+                    out[:, s * k:(s + 1) * k] = (torch.nn.functional.one_hot(symbols[live_t, s], k)
+                                                 * hear_on[live_t])
             return out
 
+        # Episodes whose brains are still in the batch: nose brains first, then eye brains.
+        live = list(range(E))
         for tick in range(level.max_ticks):
-            if all(e.done for e in eps):
+            running = [i for i in live if not eps[i].done]
+            if not running:
                 break
-            nose_f = torch.tensor([self._nose_features(e) for e in eps], dtype=torch.float32, device=self.device)
-            nose_f[:, -n_hear:] = heard(sym_eye)
-            drive = [nose_f * P["nose_gain"].exp()]
+            if len(live) - len(running) >= max(1, len(live) // 10):
+                # Enough finished episodes: drop their brains, simulating them is wasted work.
+                pos = torch.tensor([j for j, i in enumerate(live) if not eps[i].done])
+                brain.keep(torch.cat([pos, pos + len(live)]) if team else pos)
+                live = running
+            L = len(live)
+            live_t = torch.tensor(live, device=self.device)
+            PL = {name: v[live_t] for name, v in P.items()}
+
+            nose_f = torch.tensor([self._nose_features(eps[i]) for i in live], dtype=torch.float32,
+                                  device=self.device)
+            nose_f[:, -n_hear:] = heard(sym_eye, live_t)
+            drive = [nose_f * PL["nose_gain"].exp()]
             if team:
-                eye_f = torch.tensor([self._eye_features(e) for e in eps], dtype=torch.float32, device=self.device)
-                eye_f[:, -n_hear:] = heard(sym_nose)
-                drive.append(eye_f * P["eye_gain"].exp())
+                eye_f = torch.tensor([self._eye_features(eps[i]) for i in live], dtype=torch.float32,
+                                     device=self.device)
+                eye_f[:, -n_hear:] = heard(sym_nose, live_t)
+                drive.append(eye_f * PL["eye_gain"].exp())
             rates = torch.cat([io.rates("nose", drive[0])] + ([io.rates("eye", drive[1])] if team else []), dim=1)
 
             counts = torch.zeros(n_readout, brain.batch, device=self.device)
             for _ in range(self.steps_per_tick):
                 counts += brain.step(io.input_idx, rates)[io.readout_idx]
             z = io.pooled(counts) * (1000.0 / self.tick_ms) / 20.0  # ~Hz / 20
-            z_nose, z_eye = z[:E], z[E:]
+            z_nose, z_eye = z[:L], z[L:]
 
-            act = (P["nose_act_w"] @ z_nose.unsqueeze(2)).squeeze(2) + P["nose_act_b"]
+            act = (PL["nose_act_w"] @ z_nose.unsqueeze(2)).squeeze(2) + PL["nose_act_b"]
             actions = act.argmax(1).tolist()
             if team:
-                say = lambda role, z_, s: ((P[sym_param(role, s, "w")] @ z_.unsqueeze(2)).squeeze(2)
-                                           + P[sym_param(role, s, "b")]).argmax(1)
-                sym_nose = torch.stack([say("nose", z_nose, s) for s in range(slots)], 1)
-                sym_eye = torch.stack([say("eye", z_eye, s) for s in range(slots)], 1)
+                say = lambda role, z_, s: ((PL[sym_param(role, s, "w")] @ z_.unsqueeze(2)).squeeze(2)
+                                           + PL[sym_param(role, s, "b")]).argmax(1)
+                sym_nose[live_t] = torch.stack([say("nose", z_nose, s) for s in range(slots)], 1)
+                sym_eye[live_t] = torch.stack([say("eye", z_eye, s) for s in range(slots)], 1)
             sn, se = sym_nose.tolist(), sym_eye.tolist()
 
-            for i, e in enumerate(eps):
+            for j, i in enumerate(live):
+                e = eps[i]
                 if e.done:
                     continue
-                pos, heading, event = world.step(e.map, e.pos, e.heading, actions[i])
+                pos, heading, event = world.step(e.map, e.pos, e.heading, actions[j])
                 # symbols: tuple per slot, None when flies don't talk
-                e.trace.append((e.pos, e.heading, actions[i], tuple(sn[i]) if team else None,
+                e.trace.append((e.pos, e.heading, actions[j], tuple(sn[i]) if team else None,
                                 tuple(se[i]) if team else None, event))
                 e.pos, e.heading = pos, heading
                 e.ticks = tick + 1

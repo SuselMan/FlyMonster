@@ -11,6 +11,22 @@ import torch
 from .config import LIFParams
 from .connectome import Connectome
 
+try:  # optional: one fused GPU kernel for the neuron update instead of ~12 passes
+    import cupy
+
+    _LIF_KERNEL = cupy.ElementwiseKernel(
+        "float32 v0, float32 k_mbr, float32 g_decay, float32 v_th, float32 v_rst, int16 r_steps",
+        "float32 v, float32 g, int16 r, bool s",
+        """
+        if (r <= 0) { v = v + (v0 - v + g) * k_mbr; g = g * g_decay; }
+        s = v > v_th;
+        if (s) { v = v_rst; g = 0; r = r_steps; } else if (r > 0) { r = r - 1; }
+        """,
+        "lif_update",
+    )
+except Exception:  # no CuPy / no CUDA toolkit: plain PyTorch path
+    _LIF_KERNEL = None
+
 
 class FlyBrain:
     def __init__(self, connectome: Connectome, batch: int = 1,
@@ -45,6 +61,20 @@ class FlyBrain:
         self.refrac[:, which] = 0
         self.spike_buf[:, :, which] = False
 
+    def resize(self, batch: int):
+        """Change batch size (resets state); weights stay on the device."""
+        self.batch = batch
+        self.reset()
+
+    def keep(self, cols: torch.Tensor):
+        """Drop brains that are no longer needed: keep batch columns `cols` (long), in order."""
+        cols = cols.to(self.device)
+        self.v = self.v[:, cols].contiguous()
+        self.g = self.g[:, cols].contiguous()
+        self.refrac = self.refrac[:, cols].contiguous()
+        self.spike_buf = self.spike_buf[:, :, cols].contiguous()
+        self.batch = len(cols)
+
     def step(self, input_idx: torch.Tensor | None = None,
              input_rate: torch.Tensor | None = None) -> torch.Tensor:
         """Advance one dt.
@@ -61,16 +91,21 @@ class FlyBrain:
             hits = torch.rand_like(input_rate) < input_rate * (p.dt * 1e-3)
             self.g.index_add_(0, input_idx, hits * (p.f_poi * p.w_syn))
 
-        active = self.refrac <= 0
-        self.v = torch.where(active, self.v + (p.v_0 - self.v + self.g) * (p.dt / p.t_mbr), self.v)
-        self.g = torch.where(active, self.g * self.g_decay, self.g)
+        if _LIF_KERNEL is not None and self.device.type == "cuda":
+            spikes = self.spike_buf[slot]
+            _LIF_KERNEL(p.v_0, p.dt / p.t_mbr, self.g_decay, p.v_th, p.v_rst, self.refrac_steps,
+                        cupy.from_dlpack(self.v), cupy.from_dlpack(self.g),
+                        cupy.from_dlpack(self.refrac), cupy.from_dlpack(spikes))
+        else:
+            active = self.refrac <= 0
+            self.v = torch.where(active, self.v + (p.v_0 - self.v + self.g) * (p.dt / p.t_mbr), self.v)
+            self.g = torch.where(active, self.g * self.g_decay, self.g)
 
-        spikes = self.v > p.v_th
-        self.v.masked_fill_(spikes, p.v_rst)
-        self.g.masked_fill_(spikes, 0.0)
-        self.refrac.sub_(1).clamp_(min=0).masked_fill_(spikes, self.refrac_steps)
-
-        self.spike_buf[slot] = spikes
+            spikes = self.v > p.v_th
+            self.v.masked_fill_(spikes, p.v_rst)
+            self.g.masked_fill_(spikes, 0.0)
+            self.refrac.sub_(1).clamp_(min=0).masked_fill_(spikes, self.refrac_steps)
+            self.spike_buf[slot] = spikes
         self.t += 1
         return spikes
 

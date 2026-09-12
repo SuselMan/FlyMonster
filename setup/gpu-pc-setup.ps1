@@ -64,6 +64,8 @@ if (-not (Test-Path .venv)) { py -3.12 -m venv .venv }
 Write-Host "Downloading CUDA PyTorch (~2.5 GB)..."
 .venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu126 --progress-bar on
 .venv\Scripts\python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(torch.__version__, torch.cuda.get_device_name(0))"
+# Fused GPU kernel for the neuron update (optional, ~2x faster generations).
+.venv\Scripts\pip install -q cupy-cuda12x nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12
 
 Step "Data"
 .venv\Scripts\python scripts\download_data.py
