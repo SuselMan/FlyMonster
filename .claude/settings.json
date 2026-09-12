@@ -1,0 +1,70 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash",
+      "PowerShell",
+      "Bash(npm run typecheck *)",
+      "Bash(npm run lint *)",
+      "mcp__claude-in-chrome__read_console_messages",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(curl -s http://localhost:*)",
+      "Bash(claude mcp list)",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__navigate",
+      "mcp__claude-in-chrome__computer",
+      "mcp__claude-in-chrome__tabs_create_mcp",
+      "mcp__claude-in-chrome__get_page_text",
+      "Bash(mkdir -p /c/Users/Ilya/.claude/plans)",
+      "mcp__github__list_issues"
+    ],
+    "ask": [
+      "Bash(git push)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --force-with-lease*)",
+      "Bash(git push origin master*)",
+      "Bash(git push origin main*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git branch -D*)",
+      "Bash(git branch -f*)",
+      "Bash(git rebase -i*)",
+      "Bash(git filter-branch*)",
+      "PowerShell(git push)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f*)",
+      "PowerShell(git push --force-with-lease*)",
+      "PowerShell(git push origin master*)",
+      "PowerShell(git push origin main*)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git clean -f*)",
+      "PowerShell(git branch -D*)",
+      "PowerShell(git branch -f*)",
+      "PowerShell(git rebase -i*)",
+      "PowerShell(git filter-branch*)"
+    ]
+  },
+  "worktree": {
+    "baseRef": "head"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"Full autonomy mode enabled by Ilya - all tool confirmations pre-approved\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}

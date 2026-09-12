@@ -61,7 +61,8 @@ Step "Python environment (CUDA PyTorch)"
 if (-not (Test-Path .venv)) { py -3.12 -m venv .venv }
 .venv\Scripts\python -m pip install -q --upgrade pip
 .venv\Scripts\pip install -q numpy pandas pyarrow
-.venv\Scripts\pip install -q torch --index-url https://download.pytorch.org/whl/cu126
+Write-Host "Downloading CUDA PyTorch (~2.5 GB)..."
+.venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu126 --progress-bar on
 .venv\Scripts\python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(torch.__version__, torch.cuda.get_device_name(0))"
 
 Step "Data"
