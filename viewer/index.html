@@ -87,6 +87,7 @@
 </div>
 
 <script>
+const FLY = new Image(); FLY.src = "/viewer/fly.png";
 const SYMBOLS = ["◆", "▲", "●", "■"];
 const SYM_COLORS = ["#f5b83d", "#5aa9f0", "#4cc38a", "#e56bb0"];
 const MOVES = { fwd: "вперёд", left: "налево", right: "направо", back: "назад", none: "—" };
@@ -298,8 +299,16 @@ class Player {
     const cur = ep.trace[Math.min(step, ep.trace.length - 1)] || { heading: 0 };
     const heading = step >= ep.trace.length ? this.headingAfter() : cur.heading;
     const [x, y] = px(...endPos); c.save(); c.translate(x + cell / 2, y + cell / 2); c.rotate(heading * Math.PI / 2);
-    c.fillStyle = step >= ep.trace.length && ep.outcome === "trap" ? css("--bad") : css("--accent");
-    c.beginPath(); c.moveTo(0, -cell * .38); c.lineTo(cell * .3, cell * .3); c.lineTo(-cell * .3, cell * .3); c.closePath(); c.fill(); c.restore();
+    const dead = step >= ep.trace.length && ep.outcome === "trap";
+    if (FLY.complete && FLY.naturalWidth) {
+      const size = cell * 1.1;
+      if (dead) c.filter = "grayscale(1) brightness(.6)";
+      c.drawImage(FLY, -size / 2, -size / 2, size, size);
+    } else {
+      c.fillStyle = dead ? css("--bad") : css("--accent");
+      c.beginPath(); c.moveTo(0, -cell * .38); c.lineTo(cell * .3, cell * .3); c.lineTo(-cell * .3, cell * .3); c.closePath(); c.fill();
+    }
+    c.restore();
     // message bubbles
     const s = ep.trace[Math.min(step, ep.trace.length - 1)];
     if (s && s.sym_eye != null && step < ep.trace.length) {
