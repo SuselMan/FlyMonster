@@ -297,6 +297,7 @@ class Arena:
     no_centipede_since: float = 0.0
     pending_flowers: list = field(default_factory=list)     # (t_due, x, y)
     wind: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    ice: float = 0.0                                    # pond ice 0..1.2, frozen at >= 1
     next_food_id: int = 0
     next_web_id: int = 0
     log: list = field(default_factory=list)     # world events for the feed
@@ -358,7 +359,7 @@ class Arena:
         return a
 
     # --- geometry --------------------------------------------------------------
-    def _inside_any(self, px, py, pad, water_only=False):
+    def _inside_any(self, px, py, pad, water_only=False, solid_only=False):
         """All obstacles at once (static geometry cached as arrays)."""
         if self._obs is None:
             O = self.obstacles
@@ -371,10 +372,20 @@ class Arena:
         hit = ((dx * c - dy * s) / (rx + pad)) ** 2 + ((dx * s + dy * c) / (ry + pad)) ** 2 < 1
         if water_only:
             hit &= water > 0
+        if solid_only:
+            hit &= water == 0
         return hit.any(-1)
 
     def blocked(self, px, py, pad: float = 0.0):
         return self._inside_any(px, py, pad)
+
+    def walk_blocked(self, px, py, pad: float = 0.0):
+        # frozen ponds can be walked on by flies (our world rule for winter)
+        return self._inside_any(px, py, pad, solid_only=self.frozen)
+
+    @property
+    def frozen(self) -> bool:
+        return self.ice >= 1.0
 
     def in_water(self, px, py):
         return self._inside_any(px, py, 0.0, water_only=True)
@@ -667,6 +678,13 @@ class Arena:
             gy = np.clip((np.asarray(flies["y"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[0] - 1)
             np.add.at(self.heat, (gy, gx), dt)
         self._food_update(t, dt)
+        # ponds freeze after a cold spell (< 3 C air) and thaw only above 5 C (ice 0..1.2, frozen at >= 1)
+        was = self.frozen
+        air = self.air_temperature(t)
+        self.ice = float(np.clip(self.ice + ((3.0 - air) / 60.0 if air < 3.0 else -(air - 5.0) / 30.0 if air > 5.0 else 0.0) * dt, 0.0, 1.2))
+        if self.frozen != was:
+            self.log.append({"t": round(t, 2), "kind": "ice_on" if self.frozen else "ice_off", "x": None, "y": None,
+                             "text": "пруды замёрзли — по льду можно ходить" if self.frozen else "лёд растаял"})
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
@@ -1045,6 +1063,7 @@ class Arena:
         return {
             "t": round(t, 3), "light": round(self.light(t), 3), "wind": [round(float(v), 2) for v in self.wind],
             "season": self.season(t), "year_phase": round(self.year_phase(t), 4), "temp": round(self.air_temperature(t), 1),
+            "ice": round(self.ice, 2),
             # fruits: [id, x, y, amount, freshness, by_viewer, amount_whole]
             "fruits": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount), round(f.freshness(t), 2), int(f.by_viewer),
                         round(f.amount0)] for f in self.food if f.kind == "fruit"],

@@ -238,6 +238,7 @@ class Life:
         self.arena.update(self.t, WORLD_DT, {"ids": self.ids, "x": self.x, "y": self.y,
                                              "stuck": self.stuck.astype(int), "airborne": self.air_left > 0,
                                              "moving": self.state == 0})
+        self._thaw_rescue()
         self._predators()
         for e in self.arena.log:
             self.events.append({**e, "fly": -1})
@@ -423,7 +424,7 @@ class Life:
         ny = self.y + speed * np.sin(self.heading) * dt
         self.touch_left = np.where(self.touch_left != 0, np.sign(self.touch_left) * np.maximum(np.abs(self.touch_left) - dt, 0), 0)
         edge = (nx < 1) | (nx > W - 1) | (ny < 1) | (ny > H - 1)
-        blocked = ~airborne & ar.blocked(nx, ny)
+        blocked = ~airborne & ar.walk_blocked(nx, ny)
         for i in np.flatnonzero((edge | blocked) & ~airborne):
             # walking into an obstacle: head bristles touch it; the body slides along if it can
             ahead = np.angle(np.exp(1j * (np.arctan2(ny[i] - self.y[i], nx[i] - self.x[i]) - self.heading[i])))
@@ -432,7 +433,7 @@ class Life:
             for rot in (0.9, -0.9, 1.8, -1.8):
                 h = self.heading[i] + rot
                 tx, ty = self.x[i] + abs(speed[i]) * 0.6 * np.cos(h) * dt, self.y[i] + abs(speed[i]) * 0.6 * np.sin(h) * dt
-                if 1 < tx < W - 1 and 1 < ty < H - 1 and not ar.blocked(tx, ty):
+                if 1 < tx < W - 1 and 1 < ty < H - 1 and not ar.walk_blocked(tx, ty):
                     nx[i], ny[i], moved = tx, ty, True
                     break
             if not moved:
@@ -448,7 +449,7 @@ class Life:
         if airborne.any():
             self.air_water[airborne] = np.maximum(self.air_water[airborne], ar.in_water(self.x[airborne], self.y[airborne]))
         landing = airborne & (self.air_left - dt <= 0)
-        extend = landing & ar.blocked(self.x, self.y, pad=1)
+        extend = landing & ar.walk_blocked(self.x, self.y, pad=1)
         self.air_left = np.where(extend, 0.1, np.maximum(self.air_left - dt, 0))
         self.air_total = np.where(extend, self.air_total + 0.1, self.air_total)
         airborne = self.air_left > 0
@@ -534,6 +535,16 @@ class Life:
                 self.counters["water_crossings"] += 1
                 self._event(i, "water_crossed", f"перелетела через воду ({dist:.0f} мм)")
             self.air_water[i] = 0
+
+    def _thaw_rescue(self):
+        # when ice melts under walking flies, the body is put on the nearest shore (world rule, no drowning)
+        ar = self.arena
+        if ar.frozen or not len(self.ids):
+            return
+        wet = (self.air_left <= 0) & ar.in_water(self.x, self.y)
+        for i in np.flatnonzero(wet):
+            self.x[i], self.y[i] = ar.near_free(float(self.x[i]), float(self.y[i]))
+            self._event(i, "ice_shore", "лёд растаял под ногами — выбралась на берег")
 
     def _predators(self):
         ar = self.arena
