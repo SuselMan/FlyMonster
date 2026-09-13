@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flysim import config  # noqa: E402
-from flysim.life.sim import READOUT, WORLD_DT, Life, LifeConfig  # noqa: E402
+from flysim.life.sim import GENES, READOUT, WORLD_DT, Life, LifeConfig  # noqa: E402
 
 FRAME_EVERY = 5      # world steps (50 ms)
 CHUNK_S = 10.0
@@ -39,7 +39,7 @@ def main():
     a = cfg.arena
     (out / "meta.json").write_text(json.dumps({
         "arena": {"size": a.size, "spider": a.spider, "odor_sigma": a.odor_sigma, "day_length": a.day_length},
-        "readout": list(READOUT), "frame_dt": FRAME_EVERY * WORLD_DT, "chunk_s": CHUNK_S,
+        "readout": list(READOUT), "genes": list(GENES), "frame_dt": FRAME_EVERY * WORLD_DT, "chunk_s": CHUNK_S,
         "physiology": cfg.physiology.__dict__, "flies": args.flies, "started": time.time(),
     }))
 
@@ -58,7 +58,7 @@ def main():
             wall = time.perf_counter() - t0
             (out / "status.json").write_text(json.dumps({
                 "chunks": chunk + 1, "sim_s": round(life.t, 1), "wall_s": round(wall, 1),
-                "speed": round(life.t / wall, 3), "alive": len(life.ids), "time": time.time()}))
+                "speed": round(life.t / wall, 3), "alive": len(life.ids), "eggs": len(life.eggs), "births": life.births, "time": time.time()}))
             print(f"t={life.t:7.1f}s  wall {wall:7.1f}s  speed {life.t / wall:.2f}x  alive {len(life.ids)}  "
                   f"events {n_events}")
             frames, chunk = [], chunk + 1

@@ -36,7 +36,8 @@ class ArenaConfig:
     food_sugar: float = 400.0
     odor_sigma: float = 30.0          # mm, width of the odor plume
     spider: tuple = (140.0, 140.0, 18.0)   # x, y, radius of the spider's corner
-    shadow_rate: float = 1 / 40.0     # attacks per fly per second (in daylight)
+    spider_catch: float = 0.1         # probability per second of being caught inside the web
+    shadow_rate: float = 1 / 25.0     # bird attacks per second on the whole arena (in daylight)
     day_length: float = 600.0         # s of simulated time for a full day/night cycle
     food_regrow: float = 90.0         # s until a depleted patch reappears elsewhere
 
@@ -91,11 +92,11 @@ class Arena:
             if t >= when:
                 self.regrow_at.remove(when)
                 self.food.append(self._new_food())
-        # birds attack more in daylight
+        # birds attack more in daylight, one random fly at a time
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.2]
-        rate = self.cfg.shadow_rate * self.light(t)
-        for fid in fly_ids:
-            if self.rng.random() < rate * dt and not any(s.target == fid for s in self.shadows):
+        if fly_ids and self.rng.random() < self.cfg.shadow_rate * self.light(t) * dt:
+            fid = fly_ids[int(self.rng.integers(len(fly_ids)))]
+            if not any(s.target == fid for s in self.shadows):
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
 
     def snapshot(self, t: float) -> dict:

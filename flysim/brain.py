@@ -72,6 +72,18 @@ class FlyBrain:
         self.batch = batch
         self.reset()
 
+    def add(self, n: int):
+        """Append n fresh brains (at rest) to the batch."""
+        dev = self.device
+        self.v = torch.cat([self.v, torch.full((self.n, n), self.p.v_0, device=dev)], 1).contiguous()
+        self.g = torch.cat([self.g, torch.zeros(self.n, n, device=dev)], 1).contiguous()
+        self.refrac = torch.cat([self.refrac, torch.zeros(self.n, n, dtype=torch.int16, device=dev)], 1).contiguous()
+        self.spike_buf = torch.cat([self.spike_buf, torch.zeros(self.delay_steps, self.n, n, dtype=torch.bool,
+                                                                device=dev)], 2).contiguous()
+        if self.x is not None:
+            self.x = torch.cat([self.x, torch.ones(self.n, n, device=dev)], 1).contiguous()
+        self.batch += n
+
     def keep(self, cols: torch.Tensor):
         """Drop brains that are no longer needed: keep batch columns `cols` (long), in order."""
         cols = cols.to(self.device)

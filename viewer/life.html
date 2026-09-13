@@ -53,11 +53,21 @@
     <h2 style="margin-top:14px">Дневник</h2>
     <ul id="diary"></ul>
   </section>
+  <section class="panel" style="grid-column:1/-1">
+    <h2>Население и гены (среднее по живым мухам)</h2>
+    <canvas id="pop" height="160"></canvas>
+    <p class="note">Размножение клональное (все мухи — копии проводки одной самки из FlyWire), гены — только физиологические
+      параметры: сила зрения, обоняния, вкуса, реакции на тень, чувствительность к голоду, скорость ходьбы. Память не наследуется;
+      обучение грибовидных тел не включено — в этой модели изменение синапсов KC→MBON не меняет нисходящие нейроны.
+      Яйцо откладывается, пока муха ест (нейроны откладки oviDN в модели на субстрат не реагируют).</p>
+  </section>
 </div>
 <script>
 const $ = id => document.getElementById(id);
 const FLY = new Image(); FLY.src = "/viewer/fly.png";
 const STATE = ["идёт", "ест", "пятится", "в полёте"];
+const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "вкус", looming: "тень", hunger: "голод", walk: "ходьба" };
+const GENE_COLORS = ["#5aa9f0", "#f5b83d", "#4cc38a", "#e5604d", "#b18cf0", "#cfd3dc"];
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
 let simT = null, playing = true, follow = true, selected = null;
 
@@ -69,14 +79,37 @@ async function refresh() {
   if (!run) return;
   if (!meta) meta = await getJSON(`/results/${run}/meta.json`).catch(() => null);
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
+  // opening a long run: start from the last ~5 minutes instead of the very beginning
+  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
   while (status && chunkLoaded + 1 < status.chunks) {
     const c = await getJSON(`/results/${run}/chunks/chunk_${String(chunkLoaded + 1).padStart(5, "0")}.json`).catch(() => null);
     if (!c) break; frames.push(...c.frames); chunkLoaded++;
-    if (frames.length > 20 * 60 * 30) frames.splice(0, frames.length - 20 * 60 * 30);   // keep ~30 min
+    if (frames.length > 20 * 60 * 10) frames.splice(0, frames.length - 20 * 60 * 10);   // keep ~10 min in memory
   }
   const r = await fetch(`/results/${run}/events.jsonl`); if (r.ok) events = (await r.text()).split("\n").filter(Boolean).map(JSON.parse);
-  if (status) $("status").textContent = `симуляция: ${fmt(status.sim_s)} · скорость ${status.speed}× реального · живы ${status.alive}` + (Date.now() / 1000 - status.time > 60 ? " · остановлена" : "");
+  if (status) $("status").textContent = `симуляция: ${fmt(status.sim_s)} · скорость ${status.speed}× реального · живы ${status.alive} · яиц ${status.eggs ?? 0} · родилось ${status.births ?? 0}` + (Date.now() / 1000 - status.time > 60 ? " · остановлена" : "");
   if (simT == null && frames.length) simT = frames[0].t;
+  drawPop();
+}
+function drawPop() {
+  const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 160;
+  cv2.width = W * dpr; cv2.height = H * dpr; const c = cv2.getContext("2d"); c.scale(dpr, dpr);
+  if (!frames.length) return;
+  const step = Math.max(1, Math.floor(frames.length / W));
+  const pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
+  const maxN = Math.max(8, ...pts.map(f => f.flies.length));
+  const X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
+  c.strokeStyle = "#252a33"; c.fillStyle = "#8a91a3"; c.font = "11px system-ui";
+  for (const v of [0.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 20); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
+  c.fillStyle = "rgba(255,255,255,.08)";
+  pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 20); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
+  (meta?.genes || []).forEach((gname, gi) => {
+    c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath();
+    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + (q[10] ? q[10][gi] : 1), 0) / f.flies.length;
+      const y = H - 10 - Math.min(2, m) / 2 * (H - 20); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
+    c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 12);
+  });
+  c.fillStyle = "#8a91a3"; c.fillText(`серые столбики — число мух (макс ${maxN})`, W - 230, 12);
 }
 $("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; };
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -121,6 +154,11 @@ function draw(now = performance.now()) {
   for (let r = sr / 4; r <= sr; r += sr / 4) { c.beginPath(); c.arc(P(sx), P(sy), P(r), 0, 7); c.stroke(); }
   for (let a = 0; a < 8; a++) { c.beginPath(); c.moveTo(P(sx), P(sy)); c.lineTo(P(sx + sr * Math.cos(a * Math.PI / 4)), P(sy + sr * Math.sin(a * Math.PI / 4))); c.stroke(); }
   c.font = `${P(8)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🕷️", P(sx), P(sy));
+  // eggs
+  for (const [x, y, p] of f.eggs || []) {
+    c.fillStyle = "#fffbe8"; c.strokeStyle = "rgba(0,0,0,.4)"; c.lineWidth = 1;
+    c.beginPath(); c.ellipse(P(x), P(y), P(1.2 + 0.4 * p), P(0.8 + 0.3 * p), 0.6, 0, 7); c.fill(); c.stroke();
+  }
   // flies (interpolated)
   const next = new Map(g.flies.map(q => [q[0], q]));
   for (const q of f.flies) {
@@ -159,7 +197,9 @@ function panel(f) {
   const q = f.flies.find(z => z[0] === selected);
   if (!q) { $("flyTitle").textContent = `Муха №${selected}`; $("flyInfo").textContent = "погибла"; $("flyBars").innerHTML = ""; return; }
   $("flyTitle").textContent = `Муха №${selected}`;
-  $("flyInfo").innerHTML = `возраст <b>${fmt(q[6])}</b> · сейчас <b>${STATE[q[4]]}</b>`;
+  const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname] || gname} ×${q[10][i]}`).join(", ");
+  $("flyInfo").innerHTML = `возраст <b>${fmt(q[6])}</b> · сейчас <b>${STATE[q[4]]}</b> · поколение <b>${q[8]}</b>` +
+    (q[9] >= 0 ? ` · мать №${q[9]}` : "") + `<br><span class="note">гены: ${genes}</span>`;
   const names = meta.readout, vals = q[7];
   const rows = [["энергия", q[5], 1, "var(--good)", (q[5] * 100).toFixed(0) + "%"],
     ...names.map((n, i) => [n, vals[i], 150, n.startsWith("GF") ? "var(--bad)" : n === "MN9" ? "var(--accent)" : "var(--blue)", vals[i] + " Гц"])];

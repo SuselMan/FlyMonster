@@ -58,6 +58,9 @@ class Olfaction:
     def keep(self, cols: torch.Tensor):
         self.state = self.state[cols]
 
+    def add(self, n: int):
+        self.state = torch.cat([self.state, torch.zeros(n, self.state.shape[1], device=self.state.device)])
+
     def rates(self, conc: torch.Tensor, dt_ms: float) -> torch.Tensor:
         """conc: (batch, odorants, 2) concentration at left/right antenna.
 

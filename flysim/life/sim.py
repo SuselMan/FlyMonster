@@ -3,13 +3,20 @@
 Loop every world step (10 ms): world -> sensory rates -> 20 brain steps
 (dt 0.5 ms) -> descending-neuron spike counts -> low-pass readout -> body.
 
-Boundaries (see docs in flysim/life/README section of the main README):
-- Sensory transduction and the body are our models (category C). Everything
-  between sensory neurons and descending/motor neurons is the connectome.
-- Body mapping uses only descending neurons with published roles:
+What is connectome and what is ours (see README):
+- Sensory transduction, the body and physiology (energy, eggs) are our models.
+  Between sensory neurons and descending/motor neurons it is the connectome.
+- Body mapping uses descending neurons with published roles only:
   DNa01/DNa02 ipsilateral turning, MDN backward walking, DNp01 giant fiber
   takeoff, MN9 proboscis (feeding). Walking itself is an innate generator
-  (the leg circuits live in the ventral nerve cord, absent from FAFB).
+  (leg circuits are in the ventral nerve cord, absent from FAFB).
+- Hunger lowers the threshold of NPF neurons and raises sugar sensitivity.
+- Reproduction is clonal. oviDN do not respond to substrate cues in this model,
+  so a mature egg is laid while the fly feeds (feeding is the brain's choice).
+- Mushroom-body learning is not included: KC->MBON changes do not move
+  descending neurons here (scripts/mb_causal_scan.py).
+- The genome holds physiological parameters only (sensory gains, hunger
+  sensitivity, walking speed), never preferences for objects.
 """
 from dataclasses import dataclass, field
 
@@ -30,11 +37,13 @@ READOUT = {               # name -> (cell_type, side or None)
     "DNa02 L": ("DNa02", "left"), "DNa02 R": ("DNa02", "right"),
     "MDN": ("MDN", None), "GF": ("DNp01", None), "MN9": (None, None),
 }
+GENES = ("vision", "smell", "taste", "looming", "hunger", "walk")
 
 
 @dataclass
 class LifeConfig:
     n_flies: int = 24
+    max_flies: int = 32
     seed: int = 1
     walk_speed: float = 14.0      # mm/s, innate walking generator
     turn_gain: float = 0.025      # rad/s per Hz of left-right DNa01+DNa02 difference
@@ -43,14 +52,29 @@ class LifeConfig:
     gf_threshold: float = 60.0    # Hz, low-passed giant fiber rate that triggers takeoff
     mdn_threshold: float = 25.0   # Hz, backward walking
     feed_threshold: float = 15.0  # Hz, MN9 while touching food
-    metabolism: float = 0.004     # energy per s at rest (energy 1 = full)
-    move_cost: float = 0.0004     # energy per mm walked
-    jump_cost: float = 0.02
-    sugar_per_s: float = 6.0      # food units eaten per s
-    energy_per_sugar: float = 0.02
+    metabolism: float = 0.0005    # energy per s at rest (1 = full; ~15 min from full to empty when walking)
+    move_cost: float = 0.00004    # energy per mm walked
+    jump_cost: float = 0.01
+    sugar_per_s: float = 5.0      # food units eaten per s
+    energy_per_sugar: float = 0.01
     lifespan: tuple = (2700.0, 3600.0)   # s, 45-60 min of simulated adult life
+    maturity: float = 300.0       # s of age before the first egg
+    egg_interval: float = 120.0   # s between eggs
+    egg_energy: float = 0.2       # energy put into an egg
+    hatch_time: float = 90.0      # s from egg to adult (development heavily compressed)
+    mutation: float = 0.12        # log-normal sigma of gene mutations
     physiology: Physiology = DEFAULT
     arena: ArenaConfig = field(default_factory=ArenaConfig)
+
+
+@dataclass
+class Egg:
+    x: float
+    y: float
+    laid: float
+    parent: int
+    generation: int
+    genome: np.ndarray
 
 
 class Life:
@@ -68,24 +92,19 @@ class Life:
         self.olf = Olfaction(self.meta, B, self.dev)
         self.arena = Arena.create(cfg.arena, cfg.seed)
         self.t = 0.0
-        # body state, one row per living fly (kept in brain batch order)
-        s = cfg.arena.size
-        self.ids = list(range(B))
-        self.next_id = B
-        self.x = self.rng.uniform(20, s - 20, B)
-        self.y = self.rng.uniform(20, s - 20, B)
-        self.heading = self.rng.uniform(-np.pi, np.pi, B)
-        self.energy = np.full(B, 0.7)
-        self.age = np.zeros(B)
-        self.lifespan = self.rng.uniform(*cfg.lifespan, B)
-        self.airborne = np.zeros(B)
-        self.cooldown = np.zeros(B)
-        self.jumped_at = np.full(B, -1e9)
-        self.state = np.zeros(B, dtype=int)   # 0 walk, 1 feed, 2 back, 3 jump
-        self.turn_base = np.zeros(B)
-        self.read = {k: np.zeros(B) for k in READOUT}
+        self.ids, self.next_id = [], 0
+        self.eggs: list[Egg] = []
         self.events: list = []
         self.dead: list = []
+        self.births = 0
+        self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "airborne", "cooldown", "jumped_at",
+                         "state", "turn_base", "last_feed", "last_egg", "generation", "parent", "genome")
+        for c in self._columns:
+            setattr(self, c, np.zeros((0, len(GENES))) if c == "genome" else np.zeros(0))
+        self.read = {k: np.zeros(0) for k in READOUT}
+        s = cfg.arena.size
+        self._append(self.rng.uniform(20, s - 20, B), self.rng.uniform(20, s - 20, B),
+                     np.ones((B, len(GENES))), np.zeros(B), np.full(B, -1), brains_exist=True)
 
     # --- wiring ---------------------------------------------------------------
     def _wire(self):
@@ -94,8 +113,7 @@ class Life:
         side = m.side.fillna("").to_numpy()
         sup = m.super_class.fillna("").to_numpy()
         sub = m.cell_sub_class.fillna("").to_numpy()
-        dn = np.flatnonzero(sup == "descending")
-        reach = dn_reach(con, dn)
+        reach = dn_reach(con, np.flatnonzero(sup == "descending"))
 
         def ranked(mask, k):
             idx = np.flatnonzero(mask)
@@ -111,56 +129,94 @@ class Life:
             "touch_R": np.flatnonzero((sub == "head bristle") & (side == "right")),
         }
         self.group_names = list(groups)
+        self.group_gene = {"vis_L": "vision", "vis_R": "vision", "loom_L": "looming", "loom_R": "looming",
+                           "sugar": "taste", "touch_L": None, "touch_R": None}
         idx, col = [], []
         for g, name in enumerate(self.group_names):
             idx.extend(groups[name].tolist())
             col.extend([g] * len(groups[name]))
         self.sense_idx = torch.tensor(idx, device=self.dev)
         self.sense_col = torch.tensor(col, device=self.dev)
-        self.readout_idx = {}
-        for name, (t, s) in READOUT.items():
-            if name == "MN9":
-                sel = [con.index_of[neurons.MN9]]
-            else:
-                sel = np.flatnonzero((ct == t) & ((side == s) if s else True)).tolist()
-            self.readout_idx[name] = torch.tensor(sel, device=self.dev)
-        # hunger state acts on the NPF circuit's excitability (not as a sensory drive)
+        # one gather for all readout neurons, then average per readout name
+        read_idx, read_row = [], []
+        for r, (name, (t, s)) in enumerate(READOUT.items()):
+            sel = [con.index_of[neurons.MN9]] if name == "MN9" else \
+                np.flatnonzero((ct == t) & ((side == s) if s else True)).tolist()
+            read_idx.extend(sel)
+            read_row.extend([r] * len(sel))
+        self.read_idx = torch.tensor(read_idx, device=self.dev)
+        M = torch.zeros(len(READOUT), len(read_idx), device=self.dev)
+        M[torch.tensor(read_row), torch.arange(len(read_idx))] = 1
+        self.read_mix = M / M.sum(1, keepdim=True)
         self.npf_idx = torch.tensor(np.flatnonzero(np.char.find(ct.astype(str), "NPF") >= 0), device=self.dev)
+
+    # --- population -----------------------------------------------------------
+    def _append(self, xs, ys, genomes, generations, parents, brains_exist=False):
+        n = len(xs)
+        if not brains_exist:
+            self.brain.add(n)
+            self.olf.add(n)
+        new = {
+            "x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
+            "age": np.zeros(n), "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "airborne": np.zeros(n),
+            "cooldown": np.zeros(n), "jumped_at": np.full(n, -1e9), "state": np.zeros(n), "turn_base": np.zeros(n),
+            "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
+            "parent": parents, "genome": genomes,
+        }
+        for c in self._columns:
+            setattr(self, c, np.concatenate([getattr(self, c), new[c]]))
+        self.read = {k: np.concatenate([v, np.zeros(n)]) for k, v in self.read.items()}
+        born = list(range(self.next_id, self.next_id + n))
+        self.ids.extend(born)
+        self.next_id += n
+        return born
+
+    def _hatch(self):
+        ready = [e for e in self.eggs if self.t - e.laid >= self.cfg.hatch_time]
+        room = self.cfg.max_flies - len(self.ids)
+        for e in ready[:max(room, 0)]:
+            self.eggs.remove(e)
+            genome = e.genome * np.exp(self.rng.normal(0, self.cfg.mutation, len(GENES)))
+            fid = self._append(np.array([e.x]), np.array([e.y]), genome[None], np.array([e.generation]),
+                               np.array([e.parent]))[0]
+            self.births += 1
+            self.events.append({"t": round(self.t, 2), "fly": fid, "kind": "born",
+                                "text": f"вылупилась (поколение {e.generation}, мать №{e.parent})"})
+        for e in ready[max(room, 0):]:   # no room: the egg does not develop
+            if self.t - e.laid > 3 * self.cfg.hatch_time:
+                self.eggs.remove(e)
 
     # --- one world step -----------------------------------------------------
     @torch.no_grad()
     def step(self):
-        cfg, B = self.cfg, len(self.ids)
-        if B == 0:
+        if not self.ids:
             return
         light = self.arena.light(self.t)
-        rates = self._sensory_rates(light)                     # (n_sense, B)
-        olf_rates = self._olfaction()                          # (n_orn, B)
+        g = torch.tensor(self.genome, dtype=torch.float32, device=self.dev)     # (B, genes)
+        rates = self._sensory_rates(light)
+        olf_rates = self._olfaction() * g[:, GENES.index("smell")]
         idx = torch.cat([self.sense_idx, self.olf.input_idx])
         all_rates = torch.cat([rates, olf_rates])
         hunger = torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)
-        counts = {k: torch.zeros(B, device=self.dev) for k in READOUT}
-        tau_g = self.brain.p.tau
+        npf_drive = 4.0 * hunger * g[:, GENES.index("hunger")] * (self.brain.p.dt / self.brain.p.tau)
+        counts = torch.zeros(len(self.read_idx), len(self.ids), device=self.dev)
         for _ in range(self.steps_per_world):
             if len(self.npf_idx):
-                # depolarising offset ~ lowered threshold, scaled by hunger (mV)
-                self.brain.g[self.npf_idx] += (4.0 * hunger) * (self.brain.p.dt / tau_g)
-            spikes = self.brain.step(idx, all_rates)
-            for k, sel in self.readout_idx.items():
-                counts[k] += spikes[sel].float().mean(0) if len(sel) else 0
+                self.brain.g[self.npf_idx] += npf_drive
+            counts += self.brain.step(idx, all_rates)[self.read_idx]
+        hz = ((self.read_mix @ counts) / WORLD_DT).cpu().numpy()
         a = WORLD_DT / READ_TAU
-        for k in READOUT:
-            hz = counts[k].cpu().numpy() / WORLD_DT
-            self.read[k] += (hz - self.read[k]) * a
+        for r, k in enumerate(READOUT):
+            self.read[k] += (hz[r] - self.read[k]) * a
         self._body(light)
+        self._hatch()
         self.arena.update(self.t, WORLD_DT, None, self.ids)
         self.t += WORLD_DT
 
     def _sensory_rates(self, light: float) -> torch.Tensor:
         cfg, B = self.cfg, len(self.ids)
         drive = np.zeros((len(self.group_names), B), dtype=np.float32)
-        g = {n: i for i, n in enumerate(self.group_names)}
-        # vision: salience of objects in each hemifield (other flies, food spots)
+        gi = {n: i for i, n in enumerate(self.group_names)}
         ox = np.concatenate([self.x, [f.x for f in self.arena.food]])
         oy = np.concatenate([self.y, [f.y for f in self.arena.food]])
         osize = np.concatenate([np.full(B, 1.5), [f.radius for f in self.arena.food]])
@@ -172,28 +228,28 @@ class Life:
         ang[dist > 60] = 0
         left = (ang * np.clip(az / 0.5, 0, 1)).sum(1)
         right = (ang * np.clip(-az / 0.5, 0, 1)).sum(1)
-        drive[g["vis_L"]] = 150 * light * np.clip(left / 0.5, 0, 1)
-        drive[g["vis_R"]] = 150 * light * np.clip(right / 0.5, 0, 1)
-        # looming bird shadow
+        drive[gi["vis_L"]] = 150 * light * np.clip(left / 0.5, 0, 1)
+        drive[gi["vis_R"]] = 150 * light * np.clip(right / 0.5, 0, 1)
         for s in self.arena.shadows:
             if s.target in self.ids:
                 i = self.ids.index(s.target)
                 p = min(1.0, (self.t - s.t_start) / s.duration)
                 rel = np.angle(np.exp(1j * (s.direction - self.heading[i])))
                 strength = 180 * p ** 2 * (0.3 + 0.7 * light)
-                drive[g["loom_L"], i] = strength * (1.0 if rel > -0.3 else 0.3)
-                drive[g["loom_R"], i] = strength * (1.0 if rel < 0.3 else 0.3)
-        # taste on contact with food, stronger when hungry
+                drive[gi["loom_L"], i] = strength * (1.0 if rel > -0.3 else 0.3)
+                drive[gi["loom_R"], i] = strength * (1.0 if rel < 0.3 else 0.3)
         for f in self.arena.food:
             on = np.hypot(self.x - f.x, self.y - f.y) < f.radius
-            drive[g["sugar"], on] = 150 * (0.5 + np.clip(1 - self.energy[on], 0, 1)) * f.strength
-        # touch: head bristles when pressing against a wall
+            drive[gi["sugar"], on] = 150 * (0.5 + np.clip(1 - self.energy[on], 0, 1)) * f.strength
         s = cfg.arena.size
         near = (self.x < 3) | (self.x > s - 3) | (self.y < 3) | (self.y > s - 3)
         wall_dir = np.arctan2(np.clip(self.y, 3, s - 3) - self.y, np.clip(self.x, 3, s - 3) - self.x) + np.pi
         rel = np.angle(np.exp(1j * (wall_dir - self.heading)))
-        drive[g["touch_L"], near & (rel >= 0)] = 100
-        drive[g["touch_R"], near & (rel < 0)] = 100
+        drive[gi["touch_L"], near & (rel >= 0)] = 100
+        drive[gi["touch_R"], near & (rel < 0)] = 100
+        for name, gene in self.group_gene.items():
+            if gene:
+                drive[gi[name]] *= self.genome[:, GENES.index(gene)]
         return torch.from_numpy(drive).to(self.dev)[self.sense_col]
 
     def _olfaction(self) -> torch.Tensor:
@@ -216,9 +272,8 @@ class Life:
         r = self.read
         B = len(self.ids)
         # Single DNa01/DNa02 neurons in this one connectome carry a static
-        # left bias (e.g. symmetric odor drives left DNa02 much more). The body
-        # model adapts to sustained left-right difference (time constant
-        # turn_adapt) and steers on its changes. Our assumption, category C.
+        # left bias (symmetric odor drives left DNa02 much more). The body
+        # adapts to a sustained left-right difference and steers on its changes.
         diff = (r["DNa01 L"] + r["DNa02 L"]) - (r["DNa01 R"] + r["DNa02 R"])
         self.turn_base += (diff - self.turn_base) * (dt / cfg.turn_adapt)
         turn = cfg.turn_gain * (diff - self.turn_base)
@@ -230,11 +285,11 @@ class Life:
         self.cooldown = np.maximum(self.cooldown - dt, 0)
         takeoff = (r["GF"] > cfg.gf_threshold) & (self.cooldown <= 0) & (self.airborne <= 0)
 
-        speed = np.full(B, cfg.walk_speed) * (0.35 + 0.65 * light)   # slower in the dark
+        walk = cfg.walk_speed * self.genome[:, GENES.index("walk")]
+        speed = walk * (0.35 + 0.65 * light)
         speed[feeding] = 0
-        speed[backward] = -0.5 * cfg.walk_speed
+        speed[backward] = -0.5 * walk[backward]
         self.heading += turn * dt + cfg.wander * np.sqrt(dt) * self.rng.normal(0, 1, B)
-        # takeoff: a short ballistic flight away
         for i in np.flatnonzero(takeoff):
             self.airborne[i] = 0.15
             self.cooldown[i] = 1.0
@@ -253,24 +308,30 @@ class Life:
         self.x, self.y = np.clip(nx, 1, s - 1), np.clip(ny, 1, s - 1)
         self.heading[hit] += np.pi / 2 * self.rng.choice([-1, 1], hit.sum()) * 0.3
 
-        # feeding
         for f in self.arena.food:
             here = feeding & (np.hypot(self.x - f.x, self.y - f.y) < f.radius)
             if here.any() and f.sugar > 0:
                 eat = min(f.sugar, cfg.sugar_per_s * dt * here.sum())
                 f.sugar -= eat
                 self.energy[here] += eat / here.sum() * cfg.energy_per_sugar
-        starting = feeding & (self.state != 1)
-        for i in np.flatnonzero(starting):
+        for i in np.flatnonzero(feeding & (self.t - self.last_feed > 3.0)):
             self._event(i, "feed", "ест сахар (MN9 → хоботок)")
+        self.last_feed[feeding] = self.t
+        # a mature egg is laid on the food the fly chose to feed on
+        can_lay = feeding & (self.age > cfg.maturity) & (self.t - self.last_egg > cfg.egg_interval) \
+            & (self.energy > 0.6)
+        for i in np.flatnonzero(can_lay):
+            self.eggs.append(Egg(float(self.x[i]), float(self.y[i]), self.t, self.ids[i],
+                                 int(self.generation[i]) + 1, self.genome[i].copy()))
+            self.energy[i] -= cfg.egg_energy
+            self.last_egg[i] = self.t
+            self._event(i, "egg", "отложила яйцо")
         self.state = np.where(flying, 3, np.where(feeding, 1, np.where(backward, 2, 0)))
 
-        # metabolism and ageing
         self.energy -= cfg.metabolism * dt + cfg.move_cost * np.abs(speed) * dt * (~flying)
         self.energy = np.clip(self.energy, 0, 1)
         self.age += dt
 
-        # dangers
         for sh in list(self.arena.shadows):
             if sh.target in self.ids and self.t - sh.t_start >= sh.duration and not getattr(sh, "resolved", False):
                 i = self.ids.index(sh.target)
@@ -279,10 +340,9 @@ class Life:
                     self._event(i, "escape", "увернулась от птицы")
                 else:
                     self._kill(i, "bird", "поймана птицей")
-        sx, sy, sr = self.cfg.arena.spider
+        sx, sy, sr = cfg.arena.spider
         in_web = np.hypot(self.x - sx, self.y - sy) < sr
-        caught = in_web & (self.rng.random(len(self.ids)) < 0.25 * dt)
-        for i in np.flatnonzero(caught):
+        for i in np.flatnonzero(in_web & (self.rng.random(B) < cfg.arena.spider_catch * dt)):
             self._kill(i, "spider", "поймана пауком")
         for i in np.flatnonzero(self.energy <= 0):
             self._kill(i, "starved", "умерла от голода")
@@ -295,7 +355,7 @@ class Life:
         self.events.append({"t": round(self.t, 2), "fly": self.ids[i], "kind": kind, "text": text})
 
     def _kill(self, i: int, kind: str, text: str):
-        if self.ids[i] not in [d for d, _ in self.dead]:
+        if self.ids[i] not in {d for d, _ in self.dead}:
             self._event(i, "death_" + kind, text)
             self.dead.append((self.ids[i], kind))
 
@@ -307,17 +367,18 @@ class Life:
         cols = np.flatnonzero(keep)
         self.brain.keep(torch.tensor(cols, device=self.dev))
         self.olf.keep(torch.tensor(cols, device=self.dev))
-        for name in ("x", "y", "heading", "energy", "age", "lifespan", "airborne", "cooldown", "jumped_at", "state",
-                     "turn_base"):
-            setattr(self, name, getattr(self, name)[cols])
+        for c in self._columns:
+            setattr(self, c, getattr(self, c)[cols])
         self.read = {k: v[cols] for k, v in self.read.items()}
         self.ids = [fid for fid, k in zip(self.ids, keep) if k]
 
     def frame(self) -> dict:
         return {
             **self.arena.snapshot(self.t),
+            "eggs": [[round(e.x, 1), round(e.y, 1), round((self.t - e.laid) / self.cfg.hatch_time, 2)] for e in self.eggs],
             "flies": [[fid, round(float(self.x[i]), 1), round(float(self.y[i]), 1), round(float(self.heading[i]), 2),
                        int(self.state[i]), round(float(self.energy[i]), 3), round(float(self.age[i]), 1),
-                       [int(self.read[k][i]) for k in READOUT]]
+                       [int(self.read[k][i]) for k in READOUT], int(self.generation[i]), int(self.parent[i]),
+                       [round(float(v), 2) for v in self.genome[i]]]
                       for i, fid in enumerate(self.ids)],
         }
