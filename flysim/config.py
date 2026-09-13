@@ -29,3 +29,8 @@ class LIFParams:
     t_dly: float = 1.8       # ms, synaptic delay
     w_syn: float = 0.275     # mV per synapse
     f_poi: float = 250.0     # Poisson input weight, in units of w_syn
+    # Short-term synaptic depression (Tsodyks-Markram, depression only), per
+    # presynaptic neuron: a spike transmits w * x, then x -= std_u * x, and x
+    # recovers to 1 with std_tau. std_u = 0 disables it (original model).
+    std_u: float = 0.0
+    std_tau: float = 500.0   # ms

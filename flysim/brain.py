@@ -24,8 +24,10 @@ try:  # optional: one fused GPU kernel for the neuron update instead of ~12 pass
         """,
         "lif_update",
     )
+    _STD_RECOVER = cupy.ElementwiseKernel("float32 k", "float32 x", "x = x + (1 - x) * k", "std_recover")
 except Exception:  # no CuPy / no CUDA toolkit: plain PyTorch path
     _LIF_KERNEL = None
+    _STD_RECOVER = None
 
 
 class FlyBrain:
@@ -54,12 +56,16 @@ class FlyBrain:
             self.refrac = torch.zeros(shape, dtype=torch.int16, device=dev)
             # Ring buffer of past spikes, to apply the synaptic delay.
             self.spike_buf = torch.zeros((self.delay_steps, *shape), dtype=torch.bool, device=dev)
+            # Synaptic resources for short-term depression (None when disabled).
+            self.x = torch.ones(shape, device=dev) if self.p.std_u > 0 else None
             self.t = 0
             return
         self.v[:, which] = self.p.v_0
         self.g[:, which] = 0
         self.refrac[:, which] = 0
         self.spike_buf[:, :, which] = False
+        if self.x is not None:
+            self.x[:, which] = 1.0
 
     def resize(self, batch: int):
         """Change batch size (resets state); weights stay on the device."""
@@ -73,6 +79,8 @@ class FlyBrain:
         self.g = self.g[:, cols].contiguous()
         self.refrac = self.refrac[:, cols].contiguous()
         self.spike_buf = self.spike_buf[:, :, cols].contiguous()
+        if self.x is not None:
+            self.x = self.x[:, cols].contiguous()
         self.batch = len(cols)
 
     def step(self, input_idx: torch.Tensor | None = None,
@@ -86,6 +94,12 @@ class FlyBrain:
         p = self.p
         slot = self.t % self.delay_steps
         self._deliver(self.spike_buf[slot])
+        if self.x is not None:  # resources recover towards 1
+            k = p.dt / p.std_tau
+            if _STD_RECOVER is not None and self.device.type == "cuda":
+                _STD_RECOVER(k, cupy.from_dlpack(self.x))
+            else:
+                self.x += (1 - self.x) * k
 
         if input_idx is not None:
             hits = torch.rand_like(input_rate) < input_rate * (p.dt * 1e-3)
@@ -126,4 +140,10 @@ class FlyBrain:
         offsets = torch.cumsum(counts, 0) - counts
         syn = torch.repeat_interleave(starts - offsets, counts) + torch.arange(total, device=self.device)
         flat = self.post[syn] * self.batch + torch.repeat_interleave(col, counts)
-        self.g.view(-1).index_add_(0, flat, self.w[syn])
+        w = self.w[syn]
+        if self.x is not None:
+            # Depression: this release uses the current resource, then depletes it.
+            eff = self.x[pre, col]
+            w = w * torch.repeat_interleave(eff, counts)
+            self.x[pre, col] = eff * (1 - self.p.std_u)
+        self.g.view(-1).index_add_(0, flat, w)

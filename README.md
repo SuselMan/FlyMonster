@@ -1,33 +1,67 @@
-# Fly team
+# FlyMonster
 
-Two simulated fruit fly brains (FlyWire connectome) that must cooperate:
-the "Eye" fly sees objects far away, the "Nose" fly smells whether they are food.
-The goal is to let them evolve a communication channel and decode it.
+Experiments with the whole-brain fruit fly model (FlyWire v783 connectome,
+leaky integrate-and-fire model of Shiu et al. 2024), running on a GPU:
+a maze with talking flies (failed, kept for reference), Flappy Fly,
+an interactive brain explorer, and a 2D world where flies with full brains live.
+
+## Viewer
+
+`python scripts/serve.py`, then open `http://<pc>:8080`:
+
+- `/viewer/life.html` — flies living in an arena, 1:1 playback of the simulation
+- `/viewer/brain.html` — stimulate a sense, watch activity spread through all neurons
+- `/viewer/flappy.html` — the fly brain playing Flappy Bird
+- `/` — maze experiment
 
 ## Layout
 
 ```
-flysim/            Python package: simulation
-  config.py        paths and LIF parameters (Shiu et al. 2024)
+flysim/
+  config.py        paths, LIF parameters (+ optional short-term depression)
   connectome.py    FlyWire v783 -> sparse weight matrix
-  brain.py         batched whole-brain LIF simulation (PyTorch, CPU/CUDA)
-  neurons.py       named neuron groups (sugar GRNs, MN9, ...)
-  world.py         seeded maze: loops, traps, smell and vision
-  body.py          which neurons get senses, which are read out
-  team.py          maze episodes with brains in the loop, curriculum levels
+  brain.py         batched whole-brain LIF simulation (PyTorch, optional CuPy kernel)
+  physiology.py    overrides of "synapse count x transmitter sign" (see below)
+  assays.py        regression assays the model must pass
+  senses.py        sensory transducers (olfaction: saturation, adaptation)
+  explorer.py      backend of the brain explorer
+  flappy*.py       Flappy Fly
+  life/            the arena world: arena.py (food, spider, birds, day/night), sim.py (flies)
+  world.py body.py team.py   maze experiment
 scripts/
-  download_data.py fetch connectome and annotations into data/raw
-  smoke_test.py    run the brain, check the sugar -> MN9 response, measure speed
-  probe_senses.py  does every sense reach descending neurons without runaway activity
-  show_maps.py     print generated mazes
-  evolve.py        evolution of Eye + Nose pairs, logs and replays in results/<run>
-  serve.py         web viewer: python scripts/serve.py, open http://<pc>:8080
-viewer/            viewer page
+  physiology_scan.py  scan overrides against assays
+  mb_causal_scan.py   does KC->MBON plasticity change descending neurons?
+  life_run.py         run and record the arena
+  serve.py            web viewer
+  ...
+viewer/            pages
 setup/             one-click setup of the GPU PC
-data/              downloaded data and caches (not in git)
-results/           run outputs (not in git)
-index.js           Node side, later: web UI for watching the flies
 ```
+
+## What is data and what is ours
+
+Between sensory neurons and descending/motor neurons everything is the
+connectome and the published LIF model. Around it:
+
+- **Physiology overrides** (`physiology.py`, default chosen by `physiology_scan.py`):
+  dopamine/serotonin/octopamine synapses are not treated as fast excitation
+  (they act through slow receptors); excitatory outputs of antennal-lobe local
+  neurons are scaled x0.25. Without this any odor ignites one self-sustaining
+  avalanche and all odors look the same. With it: odors separable
+  (corr 0.02), intensity coded, no runaway, and sugar->MN9, looming->giant
+  fiber, vision->DNb05 are unchanged.
+- **Photoreceptors are not used**: histamine is missing from FlyWire's
+  transmitter predictions, so the first visual synapse has the wrong sign.
+  Vision enters at visual projection neurons.
+- **Sensory transducers** (odor saturation/adaptation, vision salience,
+  looming from bird shadows) are modelling choices.
+- **Body**: walking is an innate generator (leg circuits are in the ventral
+  nerve cord, not in FAFB). The brain steers with DNa01/DNa02, walks backward
+  with MDN, takes off with the giant fiber DNp01, feeds with MN9. The body
+  adapts to a sustained left-right DNa difference (the single DNa neurons of
+  this connectome carry a static left bias).
+- **Hunger** lowers the threshold of NPF neurons and raises sugar sensitivity.
+- **One female fly's wiring**: every fly has the same connectome.
 
 ## Setup
 
@@ -44,3 +78,4 @@ python -m venv .venv
 - Connectome: FlyWire v783, as prepared in
   [philshiu/Drosophila_brain_model](https://github.com/philshiu/Drosophila_brain_model)
 - Annotations: [flyconnectome/flywire_annotations](https://github.com/flyconnectome/flywire_annotations)
+- Reference for biological assumptions: [vaibhavkedarisetti/fruit-fly-lab](https://github.com/vaibhavkedarisetti/fruit-fly-lab)
