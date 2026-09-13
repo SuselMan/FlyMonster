@@ -7,66 +7,64 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,500;0,700;1,500&family=Alegreya+Sans:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  /* Naturalist's field station at night: the terrarium is lit, everything around it is quiet. */
+  /* A naturalist's field station at night: the forest floor is lit, the notes around it stay quiet. */
   :root {
-    --night:#141a13; --bench:#1d251b; --rim:#34402f; --paper:#ebe4cf; --faded:#a39f8a;
-    --lamp:#e9b04a; --moss:#93b86a; --blood:#d8604f; --sky:#79a9c9;
-    --fruit:#ff9f2e; --spider:#b98bff; --fly:#5ad69f;
+    --night:#12170f; --bench:#1c2419; --rim:#34402f; --paper:#ece5cf; --faded:#a7a28b;
+    --lamp:#f0b54c; --moss:#98bd6c; --blood:#dd6a55; --sky:#86b5d1;
+    --fruit:#ffb347; --vinegar:#cbe86b; --predator:#a58bff; --pheromone:#7fe3c1;
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:radial-gradient(ellipse at 35% 20%, #1f2a1d 0%, var(--night) 60%) fixed; color:var(--paper);
-         font:15px/1.5 "Alegreya Sans", "Segoe UI", system-ui, sans-serif; padding:18px 20px 28px; }
+  html, body { height:100%; }
+  body { margin:0; background:radial-gradient(ellipse at 30% 10%, #1e2a1b 0%, var(--night) 55%) fixed; color:var(--paper);
+         font:15px/1.5 "Alegreya Sans", "Segoe UI", system-ui, sans-serif; padding:14px 18px 24px; }
   a { color:var(--sky); text-underline-offset:3px; }
-  .dim, .note { color:var(--faded); } .note { font-size:13px; max-width:78ch; } b { font-weight:700; }
+  .dim, .note { color:var(--faded); } .note { font-size:13px; max-width:80ch; } b { font-weight:700; }
   button, select { font:inherit; color:var(--paper); background:var(--bench); border:1px solid var(--rim); border-radius:999px; padding:4px 12px; cursor:pointer; }
   button:hover, select:hover { border-color:var(--faded); }
+  button.on { border-color:var(--lamp); color:var(--lamp); }
   button:focus-visible, select:focus-visible, canvas:focus-visible { outline:2px solid var(--lamp); outline-offset:2px; }
 
-  .masthead { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px 28px; margin-bottom:16px; }
-  .masthead h1 { font-family:Alegreya, Georgia, serif; font-weight:700; font-size:34px; line-height:1; margin:0; letter-spacing:-.01em; }
-  .masthead h1 small { display:block; font-family:"Alegreya Sans", sans-serif; font-weight:400; font-size:15px; color:var(--faded); margin-top:6px; letter-spacing:0; }
+  .masthead { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px 24px; margin-bottom:12px; }
+  .masthead h1 { font-family:Alegreya, Georgia, serif; font-weight:700; font-size:32px; line-height:1; margin:0; }
+  .masthead h1 small { display:block; font-family:"Alegreya Sans", sans-serif; font-weight:400; font-size:15px; color:var(--faded); margin-top:6px; }
   .readings { display:flex; flex-wrap:wrap; gap:6px; }
-  .reading { background:var(--bench); border:1px solid var(--rim); border-radius:8px; padding:3px 10px; font-size:14px; }
-  .reading b { font-variant-numeric:tabular-nums; color:var(--paper); } .reading span { color:var(--faded); }
+  .reading { background:var(--bench); border:1px solid var(--rim); border-radius:8px; padding:2px 10px; font-size:14px; }
+  .reading b { font-variant-numeric:tabular-nums; } .reading span { color:var(--faded); }
   .masthead nav { margin-left:auto; display:flex; gap:14px; align-items:center; }
 
-  .station { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:22px; align-items:start; }
-  .terrarium { min-width:0; }
-  .toolbar { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:10px; }
+  .station { display:grid; grid-template-columns:minmax(0,1fr) 370px; gap:18px; align-items:start; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-bottom:8px; }
   .toolbar .group { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  #live.on { border-color:var(--lamp); color:var(--lamp); }
-  .layer { opacity:.5; } .layer.on { opacity:1; border-color:currentColor; }
-  .layer i { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:1px; }
   #clock { font-variant-numeric:tabular-nums; color:var(--faded); }
-  .glass { position:relative; width:fit-content; max-width:100%; margin:0 auto; border-radius:18px; padding:10px; background:linear-gradient(145deg, #3a4636, #1b2219);
-           box-shadow:0 0 0 1px #0d110c, 0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08); }
-  #arena { display:block; width:min(80vh, calc(100vw - 460px)); min-width:320px; max-width:100%; border-radius:10px; cursor:crosshair; }
-  @media (max-width:1050px) { #arena { width:min(80vh, calc(100vw - 60px)); } }
+  .world { position:relative; border-radius:16px; overflow:hidden; box-shadow:0 0 0 1px #0a0d09, 0 24px 70px rgba(0,0,0,.55); }
+  #view { display:block; width:100%; height:min(74vh, 820px); cursor:grab; touch-action:none; }
+  #view.dragging { cursor:grabbing; } #view.placing { cursor:copy; }
+  #mini { position:absolute; right:12px; bottom:12px; width:210px; height:140px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.5); cursor:pointer; }
+  .hint { position:absolute; left:12px; bottom:12px; background:rgba(18,23,15,.78); border-radius:8px; padding:4px 10px; font-size:13px; color:var(--faded); pointer-events:none; }
+  #toast { position:absolute; left:50%; top:12px; transform:translateX(-50%); background:rgba(18,23,15,.9); border:1px solid var(--rim); border-radius:8px; padding:5px 12px; font-size:14px; display:none; }
 
-  .key { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:6px 18px; margin:14px 2px 0; font-size:13px; color:var(--faded); }
-  .key div { display:flex; gap:8px; align-items:center; } .key .sym { width:26px; text-align:center; font-size:16px; color:var(--paper); }
+  .key { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:4px 18px; margin:12px 2px 0; font-size:13px; color:var(--faded); }
+  .key div { display:flex; gap:8px; align-items:center; } .key .sym { width:24px; text-align:center; font-size:15px; color:var(--paper); }
 
-  aside { min-width:0; }
-  .label { position:relative; background:var(--paper); color:#2a2618; border-radius:4px; padding:14px 16px 12px;
-           box-shadow:0 12px 30px rgba(0,0,0,.4); font-size:14px; }
+  aside { min-width:0; display:flex; flex-direction:column; gap:16px; }
+  .label { position:relative; background:var(--paper); color:#2a2618; border-radius:4px; padding:14px 16px 12px; box-shadow:0 12px 30px rgba(0,0,0,.4); font-size:14px; }
   .label::before { content:""; position:absolute; top:-7px; left:22px; width:12px; height:12px; border-radius:50%;
-                   background:radial-gradient(circle at 35% 35%, #e9e9e9, #7b7b7b); box-shadow:0 2px 3px rgba(0,0,0,.5); }
+                   background:radial-gradient(circle at 35% 35%, #efefef, #7b7b7b); box-shadow:0 2px 3px rgba(0,0,0,.5); }
   .label h2 { font-family:Alegreya, Georgia, serif; font-size:24px; margin:0 0 2px; font-weight:700; }
   .label .dim, .label .note { color:#6d6650; }
-  .label .track { background:#d6cdb2; } .label .bar, .label .nose { color:#3b3524; }
-  .bar { display:grid; grid-template-columns:92px 1fr 54px; gap:8px; align-items:center; margin:5px 0; font-size:13px; }
-  .track { height:7px; background:#0e120d; border-radius:4px; overflow:hidden; } .fill { height:100%; border-radius:4px; }
-  .nose { display:grid; grid-template-columns:62px 1fr 1fr; gap:4px 10px; font-size:13px; margin:10px 0 6px; align-items:center; }
+  .label button { color:#2a2618; background:#ddd3b6; border-color:#bfb28f; font-size:13px; padding:2px 10px; }
+  .caption { margin:10px 0 6px; padding:8px 10px; background:#e2d8bb; border-radius:4px; font-size:13px; line-height:1.45; min-height:3.2em; }
+  .caption span { white-space:nowrap; } .caption .arrow { color:#8a7f60; }
+  .bar { display:grid; grid-template-columns:78px 1fr 50px; gap:8px; align-items:center; margin:3px 0; font-size:13px; color:#3b3524; }
+  .track { height:7px; background:#d4cbae; border-radius:4px; overflow:hidden; } .fill { height:100%; border-radius:4px; }
+  .nose { display:grid; grid-template-columns:62px 1fr 1fr; gap:3px 10px; font-size:13px; margin:8px 0 4px; align-items:center; color:#3b3524; }
   .nose .h { color:#6d6650; }
-  .log { margin-top:18px; }
-  .log h3, .census h3 { font-family:Alegreya, Georgia, serif; font-weight:500; font-style:italic; font-size:20px; margin:0 0 6px; }
-  #diary { list-style:none; padding:0; margin:0; max-height:330px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
-  #diary li { padding:4px 0 4px 12px; }
-  #diary .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
-  .census { margin-top:26px; }
-  #pop { display:block; width:100%; }
-  @media (max-width:1050px) { .station { grid-template-columns:1fr; } .masthead nav { margin-left:0; } }
-  @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto; } }
+  h3 { font-family:Alegreya, Georgia, serif; font-weight:500; font-style:italic; font-size:20px; margin:0 0 6px; }
+  #feed { list-style:none; padding:0; margin:0; max-height:360px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
+  #feed li { padding:3px 0 3px 12px; cursor:pointer; } #feed li:hover { background:rgba(236,229,207,.05); }
+  #feed .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
+  .census { margin-top:22px; } #pop { display:block; width:100%; }
+  @media (max-width:1100px) { .station { grid-template-columns:1fr; } .masthead nav { margin-left:0; } #mini { width:150px; height:100px; } }
 </style>
 </head>
 <body>
@@ -76,71 +74,79 @@
   <nav><select id="run" aria-label="Прогон"></select><a href="/viewer/brain.html">Мозг</a><a href="/viewer/flappy.html">Flappy Fly</a></nav>
 </header>
 <div class="station">
-  <section class="terrarium">
+  <section>
     <div class="toolbar">
       <div class="group">
         <button id="play" aria-label="Пауза">⏸</button>
-        <button id="live" class="on">К прямому эфиру</button>
+        <button id="live">К прямому эфиру</button>
         <select id="speed" aria-label="Скорость"><option value="0.25">×0.25</option><option value="1" selected>Реальное время</option><option value="4">×4</option><option value="16">×16</option></select>
       </div>
-      <div class="group" aria-label="Слои запахов">
-        <button class="layer on" data-layer="fruit" style="color:var(--fruit)"><i style="background:var(--fruit)"></i>Запах еды</button>
-        <button class="layer on" data-layer="spider" style="color:var(--spider)"><i style="background:var(--spider)"></i>Запах паука</button>
-        <button class="layer" data-layer="fly" style="color:var(--fly)"><i style="background:var(--fly)"></i>Феромоны</button>
-        <button class="layer on" data-layer="trail" style="color:var(--lamp)"><i style="background:var(--lamp)"></i>След</button>
+      <div class="group">
+        <button id="smell">Как чует муха</button>
+        <button id="follow">Следить за мухой</button>
+        <button id="place">Положить плод</button>
       </div>
       <span id="clock">—</span>
     </div>
-    <div class="glass"><canvas id="arena" tabindex="0" aria-label="Арена с мухами; кликните по мухе, чтобы открыть её карточку"></canvas></div>
-    <div class="key">
-      <div><span class="sym" style="color:var(--moss)">◔</span>кольцо — прожитая жизнь, полное = 60 мин</div>
-      <div><span class="sym">✦</span>блёстки — только что вылупилась</div>
-      <div><span class="sym">⇲</span>тень отъехала — муха в воздухе</div>
-      <div><span class="sym">🍯</span>ест сахар</div>
-      <div><span class="sym" style="color:var(--blood)">●</span>голодает</div>
-      <div><span class="sym">🥚</span>яйцо, вылупится через 90 с</div>
-      <div><span class="sym">🦅</span>погибла от птицы</div>
-      <div><span class="sym">🕸️</span>поймана пауком</div>
-      <div><span class="sym">🍂</span>умерла от голода</div>
-      <div><span class="sym">⌛</span>умерла от старости</div>
+    <div class="world">
+      <canvas id="view" tabindex="0" aria-label="Мир мух. Перетаскивайте карту, колесо — масштаб, клик по мухе — её карточка"></canvas>
+      <canvas id="mini" aria-label="Миникарта"></canvas>
+      <div class="hint" id="hint">Перетаскивайте карту, колесо — масштаб, клик по мухе — карточка</div>
+      <div id="toast"></div>
     </div>
-    <p class="note" style="margin-top:12px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, взлёт — гигантское волокно DNp01,
-      еду — моторный нейрон хоботка MN9. Сам шаг — врождённый генератор: нейроны ног лежат в брюшной нервной цепочке, их нет в данных мозга.
-      Цветные полосы на земле — запахи, которые получают усики.</p>
+    <div class="key">
+      <div><span class="sym" style="color:var(--moss)">◔</span>кольцо — прожитая жизнь (полное = 60 мин)</div>
+      <div><span class="sym">✦</span>блёстки — только что вылупилась</div>
+      <div><span class="sym">⇲</span>тень далеко — муха летит, чем дальше, тем выше</div>
+      <div><span class="sym" style="color:var(--lamp)">◠</span>дуга у прилипшей мухи — сила рывка из паутины</div>
+      <div><span class="sym" style="color:var(--blood)">●</span>голодает</div>
+      <div><span class="sym">🥚</span>яйцо; линия к матери у выбранной мухи</div>
+      <div><span class="sym">🦅🕷️🐛</span>погибла от птицы, паука, сороконожки</div>
+      <div><span class="sym">🍂⌛</span>умерла от голода, от старости</div>
+      <div><span class="sym" style="color:var(--fruit)">●</span>спелый плод пахнет фруктом</div>
+      <div><span class="sym" style="color:var(--vinegar)">●</span>бродящий плод пахнет уксусом</div>
+    </div>
+    <p class="note" style="margin-top:10px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, прыжок — гигантское волокно DNp01,
+      долгий перелёт — DNp02/DNp04/DNp11, еду — моторный нейрон хоботка MN9. Шаг и полёт исполняет модель тела: нейроны ног и крыльев лежат
+      в брюшной нервной цепочке, их нет в данных мозга. Паук и сороконожка — скриптовые, но мухи видят их только глазами, усиками и касанием.</p>
   </section>
   <aside>
     <div class="label">
       <h2 id="flyTitle">Выберите муху</h2>
-      <div id="flyInfo" class="dim">Кликните по мухе на арене — здесь появится её карточка: возраст, гены, что чувствуют усики и что делают нейроны.</div>
+      <div id="flyInfo" class="dim">Кликните по мухе — здесь появится её карточка: возраст, родословная, что чувствуют усики и почему она так себя ведёт.</div>
+      <div class="caption" id="caption" hidden></div>
       <div id="nose"></div>
       <div id="flyBars"></div>
     </div>
-    <div class="log">
-      <h3>Полевой дневник</h3>
-      <ul id="diary"></ul>
+    <div>
+      <h3>Что происходит в мире</h3>
+      <ul id="feed"></ul>
     </div>
   </aside>
   <section class="census" style="grid-column:1/-1">
     <h3>Перепись: сколько мух и как меняются их гены</h3>
     <canvas id="pop" height="170"></canvas>
-    <p class="note">Размножение клональное (все мухи — копии проводки одной самки из FlyWire), гены — только физиологические
-      параметры: сила зрения, обоняния, вкуса, реакции на тень, чувствительность к голоду, скорость ходьбы. Память не наследуется;
-      обучение грибовидных тел не включено — в этой модели изменение синапсов KC→MBON не меняет нисходящие нейроны.
-      Яйцо откладывается, пока муха ест (нейроны откладки oviDN в модели на субстрат не реагируют).</p>
+    <p class="note">Размножение клональное: все мухи — копии проводки одной самки из FlyWire, поэтому спаривания нет. Гены — только
+      физиологические параметры (зрение, обоняние, вкус, реакция на тень, чувствительность к голоду, скорость ходьбы). Память не наследуется;
+      обучение грибовидных тел не включено — в этой модели изменение синапсов KC→MBON не меняет нисходящие нейроны.</p>
   </section>
 </div>
 <script>
 const $ = id => document.getElementById(id);
 const FLY = new Image(); FLY.src = "/viewer/fly.png";
-const STATE = ["идёт", "ест", "пятится", "в полёте"];
+const STATE = ["идёт", "ест", "пятится", "летит", "прилипла к паутине"];
 const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "вкус", looming: "тень", hunger: "голод", walk: "ходьба" };
-const GENE_COLORS = ["#79a9c9", "#ff9f2e", "#93b86a", "#d8604f", "#b98bff", "#ebe4cf"];
-const LAYER_RGB = { fruit: [255, 150, 40], spider: [175, 110, 255], fly: [80, 225, 150] };
-const layers = { fruit: true, spider: true, fly: false, trail: true };
+const GENE_COLORS = ["#86b5d1", "#ffb347", "#98bd6c", "#dd6a55", "#a58bff", "#ece5cf"];
+const DEATH_ICON = { death_bird: "🦅", death_spider: "🕷️", death_centipede: "🐛", death_starved: "🍂", death_old: "⌛" };
+const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight: "🪽", escape: "✨", web_stuck: "🕸️", web_free: "💪", web_struggle: "…",
+  fruit_drop: "🍑", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", ...DEATH_ICON };
+const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
-let simT = null, playing = true, selected = null;
+let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = false;
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const ri = (a, b) => a + Math.random() * (b - a);
 
-// ---------------- data ----------------
+// ============ data ============
 async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw 0; return r.json(); }
 async function refresh() {
   const runs = (await getJSON("/api/runs").catch(() => [])).filter(r => r.name.startsWith("life_"));
@@ -151,9 +157,10 @@ async function refresh() {
     sel.value = run;
   }
   if (!run) return;
-  if (!meta) meta = await getJSON(`/results/${run}/meta.json`).catch(() => null);
+  if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta) { buildGround(); camera.reset(); } }
+  if (!meta || !meta.arena.obstacles) return;
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
-  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);   // start from the last ~5 min
+  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
   while (status && chunkLoaded + 1 < status.chunks) {
     const c = await getJSON(`/results/${run}/chunks/chunk_${String(chunkLoaded + 1).padStart(5, "0")}.json`).catch(() => null);
     if (!c) break; frames.push(...c.frames); chunkLoaded++;
@@ -166,15 +173,10 @@ async function refresh() {
     $("status").innerHTML = chip(status.alive, "живых") + chip(status.eggs ?? 0, "яиц") + chip(status.births ?? 0, "родилось") +
       chip(fmt(status.sim_s), "мирового времени") + chip(`${status.speed}×`, stopped ? "остановлена" : "скорость расчёта");
   }
-  if (simT == null && frames.length) simT = frames[0].t;
-  drawPop();
+  if (simT == null && frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 3);
+  renderFeed(); drawPop();
 }
 $("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; };
-const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; };
-$("live").onclick = () => { if (frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 2); };
-document.querySelectorAll(".layer").forEach(b => b.onclick = () => { layers[b.dataset.layer] = !layers[b.dataset.layer]; b.classList.toggle("on"); odorKey = ""; });
-
 function frameAt(t) {
   if (!frames.length || t == null) return null;
   const dt = frames.length > 1 ? frames[1].t - frames[0].t : 0.05;
@@ -182,320 +184,524 @@ function frameAt(t) {
   return [frames[i], frames[Math.min(i + 1, frames.length - 1)], Math.max(0, Math.min(1, x - i)), i];
 }
 
-// ---------------- odor model (same formulas as flysim/life/arena.py) ----------------
-function odorAt(f, name, x, y) {
-  const s2 = 2 * meta.arena.odor_sigma ** 2;
-  if (name === "spider") { const [sx, sy] = meta.arena.spider; return Math.exp(-((x - sx) ** 2 + (y - sy) ** 2) / s2); }
-  if (name === "fly") { let c = 0; for (const q of f.flies) c += Math.exp(-((x - q[1]) ** 2 + (y - q[2]) ** 2) / (2 * 36)); return c; }
-  let c = 0; for (const [fx, fy, sugar] of f.food) if (sugar > 0) c += Math.min(1, sugar / 50) * Math.exp(-((x - fx) ** 2 + (y - fy) ** 2) / s2);
-  return c;
+// ============ camera ============
+const view = $("view");
+const camera = {
+  cx: 300, cy: 200, z: 3,
+  reset() { this.cx = meta.arena.width / 2; this.cy = meta.arena.height / 2; this.z = Math.max(1.8, view.clientWidth / 420); },
+  toScreen(x, y) { return [(x - this.cx) * this.z + view.clientWidth / 2, (y - this.cy) * this.z + view.clientHeight / 2]; },
+  toWorld(sx, sy) { return [(sx - view.clientWidth / 2) / this.z + this.cx, (sy - view.clientHeight / 2) / this.z + this.cy]; },
+  clamp() {
+    if (!meta) return;
+    const hw = view.clientWidth / 2 / this.z, hh = view.clientHeight / 2 / this.z, W = meta.arena.width, H = meta.arena.height;
+    this.cx = W > 2 * hw ? Math.min(W - hw, Math.max(hw, this.cx)) : W / 2;
+    this.cy = H > 2 * hh ? Math.min(H - hh, Math.max(hh, this.cy)) : H / 2;
+  },
+};
+let drag = null;
+view.addEventListener("pointerdown", e => {
+  view.setPointerCapture(e.pointerId);
+  if (placing) { const [x, y] = camera.toWorld(e.offsetX, e.offsetY); ghost = { x, y, start: performance.now() }; return; }
+  drag = { x: e.clientX, y: e.clientY, cx: camera.cx, cy: camera.cy, moved: false };
+});
+view.addEventListener("pointermove", e => {
+  if (ghost) { [ghost.x, ghost.y] = camera.toWorld(e.offsetX, e.offsetY); return; }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.hypot(dx, dy) > 4) { drag.moved = true; view.classList.add("dragging"); follow = false; $("follow").classList.remove("on"); }
+  camera.cx = drag.cx - dx / camera.z; camera.cy = drag.cy - dy / camera.z; camera.clamp();
+});
+view.addEventListener("pointerup", e => {
+  view.classList.remove("dragging");
+  if (ghost) { dropFruit(ghost); ghost = null; return; }
+  if (drag && !drag.moved) pick(e.offsetX, e.offsetY);
+  drag = null;
+});
+view.addEventListener("wheel", e => {
+  e.preventDefault();
+  const [wx, wy] = camera.toWorld(e.offsetX, e.offsetY);
+  camera.z = Math.min(16, Math.max(view.clientWidth / (meta?.arena.width || 600), camera.z * Math.exp(-e.deltaY * 0.0015)));
+  const [sx, sy] = camera.toScreen(wx, wy);
+  camera.cx += (sx - e.offsetX) / camera.z; camera.cy += (sy - e.offsetY) / camera.z; camera.clamp();
+}, { passive: false });
+$("mini").addEventListener("click", e => {
+  const r = e.target.getBoundingClientRect();
+  camera.cx = (e.clientX - r.left) / r.width * meta.arena.width; camera.cy = (e.clientY - r.top) / r.height * meta.arena.height;
+  follow = false; $("follow").classList.remove("on"); camera.clamp();
+});
+$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; };
+$("live").onclick = () => { if (frames.length) simT = frames[frames.length - 1].t - 1; };
+$("smell").onclick = () => { smellMode = !smellMode; $("smell").classList.toggle("on", smellMode); };
+$("follow").onclick = () => { follow = !follow && selected != null; $("follow").classList.toggle("on", follow); if (!follow && selected == null) toast("Сначала выберите муху"); };
+$("place").onclick = () => { placing = !placing; $("place").classList.toggle("on", placing); view.classList.toggle("placing", placing);
+  $("hint").textContent = placing ? "Зажмите на земле: чем дольше держите, тем крупнее плод" : "Перетаскивайте карту, колесо — масштаб, клик по мухе — карточка"; };
+function toast(text) { const t = $("toast"); t.textContent = text; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
+
+// ============ viewer fruit ============
+let ghost = null, pending = [];
+async function dropFruit(g) {
+  const size = ghostSize(g);
+  const r = await fetch(`/api/life/${run}/command`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "fruit", x: g.x, y: g.y, size }) }).catch(() => null);
+  if (!r || !r.ok) { toast("Не удалось положить плод"); return; }
+  pending.push({ x: g.x, y: g.y, size, at: performance.now(), simAt: status?.sim_s ?? 0 });
+  const lag = status ? status.sim_s - simT : 0;
+  toast(lag > 10 ? `Плод упадёт в прямом эфире — вы смотрите запись с отставанием ${fmt(lag)}` : "Плод падает…");
 }
-const ODOR_RES = 110;
-const odorCanvas = document.createElement("canvas"); odorCanvas.width = odorCanvas.height = ODOR_RES;
-let odorKey = "", odorAge = 0;
-function renderOdor(f) {
-  const key = `${layers.fruit}${layers.spider}${layers.fly}`;
-  if (key === odorKey && performance.now() - odorAge < 120) return;
-  odorKey = key; odorAge = performance.now();
-  const ctx = odorCanvas.getContext("2d"), img = ctx.createImageData(ODOR_RES, ODOR_RES), d = img.data, S = meta.arena.size / ODOR_RES;
-  const names = ["fruit", "spider", "fly"].filter(n => layers[n]);
-  for (let j = 0; j < ODOR_RES; j++) for (let i = 0; i < ODOR_RES; i++) {
-    const x = (i + 0.5) * S, y = (j + 0.5) * S; let r = 0, g = 0, b = 0, a = 0;
-    for (const n of names) {
-      const c = Math.min(1, odorAt(f, n, x, y));
-      if (c < 0.03) continue;
-      const band = Math.ceil(c * 6) / 6;                       // stepped bands read as isolines
-      const edge = (c * 6) % 1 < 0.1 ? 0.45 : 0;               // brighter line at each band edge
-      const alpha = Math.min(0.55, band * 0.07 + edge * (0.35 + 0.4 * c));
-      const [cr, cg, cb] = LAYER_RGB[n];
-      r = r * (1 - alpha) + cr * alpha; g = g * (1 - alpha) + cg * alpha; b = b * (1 - alpha) + cb * alpha; a = 1 - (1 - a) * (1 - alpha);
-    }
-    const k = (j * ODOR_RES + i) * 4;
-    d[k] = a ? r / a : 0; d[k + 1] = a ? g / a : 0; d[k + 2] = a ? b / a : 0; d[k + 3] = a * 255;
+const ghostSize = g => Math.min(2.2, 0.4 + (performance.now() - g.start) / 900);
+
+// ============ ground (pre-rendered once, 2 px per mm) ============
+let ground = null;
+const PX = 2;
+function buildGround() {
+  const W = meta.arena.width * PX, H = meta.arena.height * PX;
+  ground = document.createElement("canvas"); ground.width = W; ground.height = H;
+  const c = ground.getContext("2d");
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const base = c.createLinearGradient(0, 0, W, H); base.addColorStop(0, "#5a4f36"); base.addColorStop(0.5, "#62583a"); base.addColorStop(1, "#4f4a31");
+  c.fillStyle = base; c.fillRect(0, 0, W, H);
+  for (let k = 0; k < 90; k++) {   // moss patches
+    const x = rnd() * W, y = rnd() * H, r = 30 + rnd() * 120;
+    const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(92,120,62,${0.25 + rnd() * 0.25})`); g.addColorStop(1, "rgba(92,120,62,0)");
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
   }
-  ctx.putImageData(img, 0, 0);
+  for (let k = 0; k < 9000; k++) {   // grain
+    const x = rnd() * W, y = rnd() * H, v = rnd();
+    c.fillStyle = v < 0.5 ? `rgba(30,24,14,${0.08 + rnd() * 0.12})` : `rgba(210,195,150,${0.04 + rnd() * 0.08})`;
+    c.fillRect(x, y, 1 + rnd() * 2, 1 + rnd() * 2);
+  }
+  for (let k = 0; k < 420; k++) {   // fallen leaves
+    const x = rnd() * W, y = rnd() * H, len = 8 + rnd() * 20, hue = 25 + rnd() * 25;
+    c.save(); c.translate(x, y); c.rotate(rnd() * 6.28);
+    c.fillStyle = `hsla(${hue},${45 + rnd() * 20}%,${28 + rnd() * 15}%,0.55)`;
+    c.beginPath(); c.moveTo(-len, 0); c.quadraticCurveTo(0, -len * 0.45, len, 0); c.quadraticCurveTo(0, len * 0.45, -len, 0); c.fill();
+    c.strokeStyle = "rgba(40,28,12,.35)"; c.lineWidth = 1; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke(); c.restore();
+  }
+  for (const [kind, x, y, rx, ry, a] of meta.arena.obstacles) {
+    c.save(); c.translate(x * PX, y * PX); c.rotate(a);
+    if (kind === "water") {
+      c.fillStyle = "rgba(40,30,18,.45)"; c.beginPath(); c.ellipse(0, 0, rx * PX + 10, ry * PX + 10, 0, 0, 7); c.fill();   // wet shore
+      const g = c.createRadialGradient(-rx * PX * .2, -ry * PX * .3, 4, 0, 0, Math.max(rx, ry) * PX);
+      g.addColorStop(0, "#6fd0c3"); g.addColorStop(0.55, "#2f8f8a"); g.addColorStop(1, "#1d5a5e");
+      c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * PX, ry * PX, 0, 0, 7); c.fill();
+      c.strokeStyle = "rgba(200,245,235,.35)"; c.lineWidth = 2; c.beginPath(); c.ellipse(0, 0, rx * PX - 3, ry * PX - 3, 0, 3.6, 5.4); c.stroke();
+    } else {
+      c.fillStyle = "rgba(0,0,0,.35)"; c.beginPath(); c.ellipse(8, 10, rx * PX, ry * PX, 0, 0, 7); c.fill();
+      const g = c.createRadialGradient(-rx * PX * .35, -ry * PX * .4, 2, 0, 0, Math.max(rx, ry) * PX * 1.1);
+      g.addColorStop(0, "#c9c5b6"); g.addColorStop(0.5, "#8f8b7c"); g.addColorStop(1, "#56534a");
+      c.fillStyle = g; c.beginPath();
+      for (let k = 0; k <= 16; k++) { const t = k / 16 * 6.283, j = 0.88 + 0.12 * Math.sin(k * 2.7 + x); c.lineTo(Math.cos(t) * rx * PX * j, Math.sin(t) * ry * PX * j); }
+      c.fill(); c.fillStyle = "rgba(120,150,80,.35)"; c.beginPath(); c.ellipse(-rx * PX * .3, ry * PX * .35, rx * PX * .35, ry * PX * .2, 0.4, 0, 7); c.fill();
+    }
+    c.restore();
+  }
+  // web (static threads)
+  const [wx, wy, wr] = meta.arena.web;
+  c.save(); c.translate(wx * PX, wy * PX); c.strokeStyle = "rgba(240,240,235,.55)"; c.lineWidth = 1;
+  for (let k = 0; k < 16; k++) { const t = k / 16 * 6.283; c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(t) * wr * PX * 1.05, Math.sin(t) * wr * PX * 1.05); c.stroke(); }
+  for (let r = 4; r < wr * PX; r += 5) { c.beginPath(); for (let k = 0; k <= 16; k++) { const t = k / 16 * 6.283; c.lineTo(Math.cos(t) * r, Math.sin(t) * r); } c.stroke(); }
+  c.restore();
+  buildMini();
+}
+let miniBase = null;
+function buildMini() {
+  const m = $("mini"); miniBase = document.createElement("canvas"); miniBase.width = 420; miniBase.height = 280;
+  miniBase.getContext("2d").drawImage(ground, 0, 0, 420, 280);
 }
 
-// ---------------- sprites (drawn once, then stamped) ----------------
+// ============ sprites ============
 function sprite(size, draw) { const c = document.createElement("canvas"); c.width = c.height = size; draw(c.getContext("2d"), size); return c; }
-const GROUND = sprite(512, (c, s) => {
-  const rnd = (i => () => (i = (i * 16807) % 2147483647) / 2147483647)(7);
-  c.fillStyle = "#6f6446"; c.fillRect(0, 0, s, s);
-  for (let k = 0; k < 2200; k++) {
-    const x = rnd() * s, y = rnd() * s, r = 0.5 + rnd() * 2.5, v = rnd();
-    c.fillStyle = v < 0.5 ? `rgba(40,32,20,${0.08 + rnd() * 0.12})` : `rgba(200,185,140,${0.05 + rnd() * 0.1})`;
-    c.beginPath(); c.ellipse(x, y, r, r * (0.5 + rnd()), rnd() * 3, 0, 7); c.fill();
-  }
-  for (let k = 0; k < 40; k++) {   // dry leaf fragments
-    const x = rnd() * s, y = rnd() * s, len = 6 + rnd() * 14;
-    c.save(); c.translate(x, y); c.rotate(rnd() * 6.28);
-    c.fillStyle = `rgba(${120 + rnd() * 40},${90 + rnd() * 30},${40 + rnd() * 20},0.35)`;
-    c.beginPath(); c.ellipse(0, 0, len, len * 0.35, 0, 0, 7); c.fill();
-    c.strokeStyle = "rgba(60,45,20,.3)"; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke(); c.restore();
-  }
-});
-const FRUIT = sprite(128, (c, s) => {
-  const m = s / 2;
-  c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(m + 6, m + 10, 44, 34, 0, 0, 7); c.fill();
-  const body = c.createRadialGradient(m - 14, m - 16, 6, m, m, 48);
-  body.addColorStop(0, "#ffd27a"); body.addColorStop(0.35, "#ff9a2e"); body.addColorStop(1, "#b8480f");
-  c.fillStyle = body; c.beginPath(); c.ellipse(m, m, 44, 40, 0, 0, 7); c.fill();
-  c.fillStyle = "rgba(255,240,200,.55)"; c.beginPath(); c.ellipse(m - 16, m - 18, 12, 7, -0.6, 0, 7); c.fill();
-  c.fillStyle = "rgba(120,40,10,.35)";
-  for (let k = 0; k < 16; k++) { const a = k * 2.4, r = 10 + (k * 7) % 30; c.beginPath(); c.arc(m + Math.cos(a) * r, m + Math.sin(a) * r * 0.9, 1.5, 0, 7); c.fill(); }
-  c.strokeStyle = "#5a3a1a"; c.lineWidth = 4; c.beginPath(); c.moveTo(m, m - 36); c.quadraticCurveTo(m + 4, m - 50, m + 10, m - 54); c.stroke();
-  c.fillStyle = "#5fae3c"; c.beginPath(); c.ellipse(m + 18, m - 50, 14, 6, -0.5, 0, 7); c.fill();
-  c.fillStyle = "rgba(255,235,150,.7)"; c.beginPath(); c.ellipse(m + 26, m + 20, 7, 11, 0.3, 0, 7); c.fill();   // sugary juice
-});
-const EGG = sprite(48, (c, s) => {
+function fruitSprite(fresh) {
+  return sprite(128, (c, s) => {
+    const m = s / 2, rot = 1 - fresh;
+    const mix = (a, b) => a.map((v, i) => Math.round(v + (b[i] - v) * rot));
+    const [l, mid, d] = [mix([255, 214, 130], [150, 110, 70]), mix([255, 150, 50], [110, 70, 50]), mix([180, 70, 20], [60, 35, 35])];
+    c.fillStyle = "rgba(0,0,0,.3)"; c.beginPath(); c.ellipse(m + 6, m + 10, 46, 36, 0, 0, 7); c.fill();
+    const g = c.createRadialGradient(m - 14, m - 16, 6, m, m, 50);
+    g.addColorStop(0, `rgb(${l})`); g.addColorStop(0.4, `rgb(${mid})`); g.addColorStop(1, `rgb(${d})`);
+    c.fillStyle = g; c.beginPath(); c.ellipse(m, m, 44, 40, 0, 0, 7); c.fill();
+    if (rot > 0.3) { c.fillStyle = `rgba(70,60,40,${rot * 0.6})`; for (let k = 0; k < 7; k++) { c.beginPath(); c.arc(m + Math.cos(k * 2.1) * 22, m + Math.sin(k * 1.7) * 18, 6 + k % 3 * 3, 0, 7); c.fill(); } }
+    c.fillStyle = `rgba(255,245,210,${0.55 * fresh})`; c.beginPath(); c.ellipse(m - 16, m - 18, 12, 7, -0.6, 0, 7); c.fill();
+    c.strokeStyle = "#5a3a1a"; c.lineWidth = 4; c.beginPath(); c.moveTo(m, m - 36); c.quadraticCurveTo(m + 4, m - 50, m + 10, m - 54); c.stroke();
+    c.fillStyle = rot > 0.5 ? "#6d6a3a" : "#6fb341"; c.beginPath(); c.ellipse(m + 18, m - 50, 14, 6, -0.5, 0, 7); c.fill();
+  });
+}
+const FRUITS = Array.from({ length: 6 }, (_, i) => fruitSprite(1 - i / 5));
+const EGG = sprite(48, (c) => {
   const g = c.createLinearGradient(12, 10, 36, 38); g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#d9d2bd");
-  c.translate(24, 24); c.rotate(0.6);
-  c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(3, 3, 8, 17, 0, 0, 7); c.fill();
+  c.translate(24, 24); c.rotate(0.6); c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(3, 3, 8, 17, 0, 0, 7); c.fill();
   c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, 8, 17, 0, 0, 7); c.fill();
-  c.strokeStyle = "rgba(255,255,255,.9)"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(-2, -14); c.lineTo(-5, -26); c.moveTo(2, -14); c.lineTo(5, -26); c.stroke();   // dorsal filaments
+  c.strokeStyle = "rgba(255,255,255,.9)"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(-2, -14); c.lineTo(-5, -26); c.moveTo(2, -14); c.lineTo(5, -26); c.stroke();
 });
-function drawSpider(c, x, y, size, t) {
-  c.save(); c.translate(x, y);
-  c.strokeStyle = "#1a1410"; c.lineCap = "round";
-  for (let side of [-1, 1]) for (let k = 0; k < 4; k++) {
-    const base = (k - 1.5) * 0.42, wig = Math.sin(t * 3 + k * 1.7 + side) * 0.06;
-    const a1 = side * (Math.PI / 2) + side * (base + wig), knee = size * 0.55, foot = size * 0.95;
-    const kx = Math.cos(a1 - side * 0.35) * knee, ky = Math.sin(a1 - side * 0.35) * knee;
-    const fx = Math.cos(a1 + side * 0.25) * foot, fy = Math.sin(a1 + side * 0.25) * foot;
-    c.lineWidth = size * 0.07; c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(kx, ky - size * 0.25, fx, fy); c.stroke();
+const SOFT = {};
+for (const [k, [r, g, b]] of Object.entries(COLORS)) SOFT[k] = sprite(64, (c, s) => {
+  const gr = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  gr.addColorStop(0, `rgba(${r},${g},${b},1)`); gr.addColorStop(0.35, `rgba(${r},${g},${b},.45)`); gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  c.fillStyle = gr; c.fillRect(0, 0, s, s);
+});
+
+function drawSpider(c, x, y, size, heading, moving, t) {
+  c.save(); c.translate(x, y); c.rotate(heading + Math.PI / 2); c.strokeStyle = "#1a1410"; c.lineCap = "round";
+  for (const side of [-1, 1]) for (let k = 0; k < 4; k++) {
+    const wig = moving ? Math.sin(t * 12 + k * 1.9 + side) * 0.25 : Math.sin(t * 2 + k) * 0.04;
+    const a = side * (Math.PI / 2 + (k - 1.5) * 0.42 + wig);
+    const kx = Math.cos(a - side * .35) * size * .55, ky = Math.sin(a - side * .35) * size * .55;
+    const fx = Math.cos(a + side * .25) * size * .95, fy = Math.sin(a + side * .25) * size * .95;
+    c.lineWidth = size * .07; c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(kx, ky - size * .25, fx, fy); c.stroke();
   }
-  const g = c.createRadialGradient(-size * .08, size * .1, 2, 0, size * .15, size * .35);
-  g.addColorStop(0, "#5b4636"); g.addColorStop(1, "#1d1611");
-  c.fillStyle = g; c.beginPath(); c.ellipse(0, size * 0.18, size * 0.28, size * 0.33, 0, 0, 7); c.fill();
-  c.fillStyle = "#2a201a"; c.beginPath(); c.ellipse(0, -size * 0.16, size * 0.18, size * 0.17, 0, 0, 7); c.fill();
-  c.fillStyle = "#c9a36a"; c.beginPath(); c.ellipse(0, size * 0.2, size * 0.07, size * 0.14, 0, 0, 7); c.fill();   // mark
-  c.fillStyle = "#e8433a"; for (const ex of [-1, 1]) { c.beginPath(); c.arc(ex * size * 0.06, -size * 0.25, size * 0.03, 0, 7); c.fill(); }
+  const g = c.createRadialGradient(-size * .08, size * .1, 2, 0, size * .15, size * .35); g.addColorStop(0, "#5b4636"); g.addColorStop(1, "#1d1611");
+  c.fillStyle = g; c.beginPath(); c.ellipse(0, size * .18, size * .28, size * .33, 0, 0, 7); c.fill();
+  c.fillStyle = "#2a201a"; c.beginPath(); c.ellipse(0, -size * .16, size * .18, size * .17, 0, 0, 7); c.fill();
+  c.fillStyle = "#d8b06f"; c.beginPath(); c.ellipse(0, size * .2, size * .07, size * .14, 0, 0, 7); c.fill();
+  c.fillStyle = "#ff5a4a"; for (const ex of [-1, 1]) { c.beginPath(); c.arc(ex * size * .06, -size * .26, size * .03, 0, 7); c.fill(); }
   c.restore();
 }
-function drawBird(c, x, y, scale, angle, alpha) {
-  c.save(); c.translate(x, y); c.rotate(angle); c.globalAlpha = alpha;
-  c.filter = `blur(${Math.max(1, 6 - scale * 0.1)}px)`;
-  c.fillStyle = "#000";
-  c.beginPath();
-  c.moveTo(scale * 0.6, 0);                                       // beak
-  c.quadraticCurveTo(scale * 0.2, -scale * 0.12, 0, -scale * 0.1);
-  c.quadraticCurveTo(-scale * 0.25, -scale * 1.1, -scale * 0.55, -scale * 1.2);   // left wing
-  c.quadraticCurveTo(-scale * 0.35, -scale * 0.3, -scale * 0.55, -scale * 0.08);
-  c.lineTo(-scale * 0.9, -scale * 0.2); c.lineTo(-scale * 0.8, 0); c.lineTo(-scale * 0.9, scale * 0.2);   // tail
-  c.lineTo(-scale * 0.55, scale * 0.08);
-  c.quadraticCurveTo(-scale * 0.35, scale * 0.3, -scale * 0.55, scale * 1.2);     // right wing
-  c.quadraticCurveTo(-scale * 0.25, scale * 1.1, 0, scale * 0.1);
-  c.quadraticCurveTo(scale * 0.2, scale * 0.12, scale * 0.6, 0);
-  c.fill(); c.restore();
-}
-
-// ---------------- deaths and flight ----------------
-const CORPSE_S = 60;
-const DEATH_ICON = { death_bird: "🦅", death_spider: "🕸️", death_starved: "🍂", death_old: "⌛" };
-const DEATH_RU = { death_bird: "птица", death_spider: "паук", death_starved: "голод", death_old: "старость" };
-const lastSeen = new Map();   // fly id -> {x, y, h, t}
-function corpses(t) {
-  const out = [];
-  for (const e of events) {
-    if (!e.kind.startsWith("death_") || e.t > t || t - e.t > CORPSE_S) continue;
-    let pos = lastSeen.get(e.fly);
-    if (!pos) {   // find the fly in the frames just before its death
-      for (let i = frames.length - 1; i >= 0; i--) {
-        if (frames[i].t > e.t) continue;
-        const q = frames[i].flies.find(z => z[0] === e.fly);
-        if (q) { pos = { x: q[1], y: q[2], h: q[3] }; lastSeen.set(e.fly, pos); break; }
-        if (e.t - frames[i].t > 2) break;
-      }
+function drawCentipede(c, pts, z, t, hunting) {
+  if (pts.length < 2) return;
+  const P = pts.map(p => camera.toScreen(p[0], p[1]));
+  const seg = Math.min(P.length, 11);
+  for (let i = seg - 1; i >= 0; i--) {
+    const [x, y] = P[i], [nx, ny] = P[Math.min(i + 1, P.length - 1)], [px, py] = P[Math.max(i - 1, 0)];
+    const ang = Math.atan2(py - ny, px - nx), w = z * (i === 0 ? 1.6 : 1.3) * (1 - i / (seg * 2.2));
+    for (const side of [-1, 1]) {   // legs
+      const phase = Math.sin(t * (hunting ? 22 : 12) + i * 1.3 * side) * 0.5;
+      const la = ang + side * (Math.PI / 2 + phase * 0.6), len = z * 2.4;
+      c.strokeStyle = "#e0b070"; c.lineWidth = Math.max(1, z * 0.28);
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(la) * len, y + Math.sin(la) * len); c.stroke();
     }
-    if (pos) out.push({ ...pos, t: e.t, kind: e.kind });
+    const g = c.createRadialGradient(x - w * .3, y - w * .3, 1, x, y, w * 1.3);
+    g.addColorStop(0, i === 0 ? "#d7643a" : "#c0582f"); g.addColorStop(1, "#5d2413");
+    c.fillStyle = g; c.beginPath(); c.ellipse(x, y, w * 1.25, w, ang, 0, 7); c.fill();
+    if (i === 0) {
+      c.strokeStyle = "#e8b77a"; c.lineWidth = Math.max(1, z * .25);
+      for (const side of [-1, 1]) { const aa = ang + side * 0.45; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + Math.cos(ang) * z * 3, y + Math.sin(ang) * z * 3, x + Math.cos(aa) * z * 5, y + Math.sin(aa) * z * 5); c.stroke(); }
+    }
   }
-  return out;
 }
-const FLIGHT_FRAMES = 3;   // a takeoff hop lasts 0.15 s = 3 frames of 50 ms
-function altitude(id, fi, k) {
-  const flyingAt = i => { const fr = frames[i]; const q = fr && fr.flies.find(z => z[0] === id); return q && q[4] === 3; };
-  if (!flyingAt(fi) && !flyingAt(fi + 1)) return 0;
-  let start = fi; while (start > 0 && fi - start < 6 && flyingAt(start - 1)) start--;
-  const phase = Math.min(1, (fi + k - start + (flyingAt(fi) ? 0 : 1)) / FLIGHT_FRAMES);
-  return Math.sin(Math.PI * Math.min(1, Math.max(0, phase)));
+function drawBird(c, x, y, scale, angle, alpha) {
+  c.save(); c.translate(x, y); c.rotate(angle); c.globalAlpha = alpha; c.filter = `blur(${Math.max(1, 8 - scale * 0.05)}px)`; c.fillStyle = "#000";
+  c.beginPath(); c.moveTo(scale * .6, 0); c.quadraticCurveTo(scale * .2, -scale * .12, 0, -scale * .1);
+  c.quadraticCurveTo(-scale * .25, -scale * 1.1, -scale * .55, -scale * 1.2); c.quadraticCurveTo(-scale * .35, -scale * .3, -scale * .55, -scale * .08);
+  c.lineTo(-scale * .9, -scale * .2); c.lineTo(-scale * .8, 0); c.lineTo(-scale * .9, scale * .2); c.lineTo(-scale * .55, scale * .08);
+  c.quadraticCurveTo(-scale * .35, scale * .3, -scale * .55, scale * 1.2); c.quadraticCurveTo(-scale * .25, scale * 1.1, 0, scale * .1);
+  c.quadraticCurveTo(scale * .2, scale * .12, scale * .6, 0); c.fill(); c.restore();
 }
 
-// ---------------- arena ----------------
-const cv = $("arena");
-let last = performance.now(), trail = [];
+// ============ odor ============
+function plumeDraw(c, name, sx, sy, amount, wind, sigma) {
+  const ws = Math.hypot(wind[0], wind[1]), ang = Math.atan2(wind[1], wind[0]);
+  const [x, y] = camera.toScreen(sx, sy), s = sigma * camera.z;
+  c.save(); c.translate(x, y); c.rotate(ang);
+  const stretch = 1 + 1.25 * ws;
+  c.globalAlpha = Math.min(1, amount);
+  c.drawImage(SOFT[name], -s * 2.2, -s * 2.2, s * 4.4 * stretch, s * 4.4);   // shifted downwind by the stretch
+  c.restore();
+}
+const particles = [];
+function emitParticles(f, dt) {
+  const add = (name, x, y, rate) => {
+    let n = rate * dt; while (n > 0) { if (Math.random() < n) particles.push({ name, x: x + ri(-3, 3), y: y + ri(-3, 3), age: 0, life: ri(3, 6), r: ri(2, 4) }); n -= 1; }
+  };
+  for (const [, x, y, sugar, fresh] of f.fruits) {
+    const s = Math.min(1, sugar / 60);
+    add("fruit", x, y, 5 * s * fresh); add("vinegar", x, y, 6 * s * (1 - fresh));
+  }
+  add("predator", meta.arena.web[0], meta.arena.web[1], 2);
+  add("predator", f.centipede[0], f.centipede[1], 3);
+  const w = f.wind;
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.age += dt; if (p.age > p.life || particles.length > 1800) { particles.splice(i, 1); continue; }
+    p.x += (w[0] * 25 + ri(-4, 4)) * dt; p.y += (w[1] * 25 + ri(-4, 4)) * dt; p.r += 2.2 * dt;
+  }
+}
+
+// ============ drawing ============
+let last = performance.now();
+const firstSeen = new Map();   // fruit id -> time it appeared (for the fall animation)
+let drawnOnce = false;
 function draw(now = performance.now()) {
-  const dtw = (now - last) / 1000; last = now;
+  const dtw = Math.min(0.1, (now - last) / 1000); last = now;
   if (frames.length && simT != null && playing) simT = Math.min(simT + dtw * +$("speed").value, frames[frames.length - 1].t);
-  const W = cv.clientWidth, H = W, dpr = devicePixelRatio || 1;
-  if (cv.width !== Math.round(W * dpr)) { cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; }
-  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const got = meta && frameAt(simT);
-  if (!got) { c.fillStyle = "#1d251b"; c.fillRect(0, 0, W, H); c.fillStyle = "#a39f8a"; c.font = "16px 'Alegreya Sans', sans-serif"; c.fillText("Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
-  const [f, g, k, fi] = got, S = W / meta.arena.size, P = v => v * S, L = f.light;
+  const W = view.clientWidth, H = view.clientHeight, dpr = devicePixelRatio || 1;
+  if (view.width !== Math.round(W * dpr) || view.height !== Math.round(H * dpr)) { view.width = W * dpr; view.height = H * dpr; }
+  const c = view.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const got = meta && ground && frameAt(simT);
+  if (!got) { c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H); c.fillStyle = "#a7a28b"; c.font = "17px 'Alegreya Sans', sans-serif";
+    c.fillText(meta && !meta.arena.obstacles ? "Этот прогон из старой версии мира — выберите новый прогон вверху" : "Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
+  const [f, g, k, fi] = got, z = camera.z, t = now / 1000, L = f.light;
+  if (follow && selected != null) { const q = f.flies.find(q => q[0] === selected); if (q) { camera.cx += (q[1] - camera.cx) * 0.15; camera.cy += (q[2] - camera.cy) * 0.15; camera.clamp(); } }
+  const S = (x, y) => camera.toScreen(x, y);
 
   // ground
-  c.drawImage(GROUND, 0, 0, W, H);
-  // odors
-  renderOdor(f);
-  c.imageSmoothingEnabled = true; c.drawImage(odorCanvas, 0, 0, W, H);
-
-  // spider web + spider
-  const [sx, sy, sr] = meta.arena.spider;
-  c.strokeStyle = "rgba(245,245,245,.55)"; c.lineWidth = 0.8;
-  for (let a = 0; a < 12; a++) { c.beginPath(); c.moveTo(P(sx), P(sy)); c.lineTo(P(sx + sr * 1.15 * Math.cos(a * Math.PI / 6)), P(sy + sr * 1.15 * Math.sin(a * Math.PI / 6))); c.stroke(); }
-  for (let r = sr / 5; r <= sr * 1.05; r += sr / 5) {
-    c.beginPath();
-    for (let a = 0; a <= 12; a++) { const ang = a * Math.PI / 6, rr = r * (0.94 + 0.06 * Math.cos(a * 2.3)); const px = P(sx + rr * Math.cos(ang)), py = P(sy + rr * Math.sin(ang)); a ? c.lineTo(px, py) : c.moveTo(px, py); }
-    c.stroke();
+  const [gx, gy] = camera.toWorld(0, 0);
+  c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H);
+  c.drawImage(ground, gx * PX, gy * PX, W / z * PX, H / z * PX, 0, 0, W, H);
+  // water ripples
+  c.strokeStyle = "rgba(210,250,240,.18)"; c.lineWidth = 1;
+  for (const [kind, x, y, rx, ry, a] of meta.arena.obstacles) {
+    if (kind !== "water") continue;
+    for (let r = 0; r < 3; r++) { const ph = ((t * 0.25 + r / 3) % 1); const [sx, sy] = S(x + Math.cos(r * 2 + x) * rx * .3, y + Math.sin(r * 3) * ry * .3);
+      c.globalAlpha = 1 - ph; c.beginPath(); c.ellipse(sx, sy, ph * rx * .5 * z, ph * ry * .5 * z, a, 0, 7); c.stroke(); }
+    c.globalAlpha = 1;
   }
-  drawSpider(c, P(sx), P(sy), P(9), now / 1000);
 
-  // food
-  for (const [x, y, sugar] of f.food) {
-    const s = P(9) * (0.55 + 0.45 * Math.min(1, sugar / 500));
-    c.drawImage(FRUIT, P(x) - s, P(y) - s, s * 2, s * 2);
+  // odor: default soft drifting wisps, "smell mode" dims the world and shows continuous plumes
+  emitParticles(f, playing ? dtw * +$("speed").value : 0);
+  if (smellMode) {
+    c.fillStyle = "rgba(8,10,14,.62)"; c.fillRect(0, 0, W, H);
+    c.globalCompositeOperation = "lighter";
+    const sig = meta.arena.odor_sigma;
+    for (const [, x, y, sugar, fresh] of f.fruits) {
+      const s = Math.min(1, sugar / 60);
+      if (fresh > 0.02) plumeDraw(c, "fruit", x, y, s * fresh * 0.9, f.wind, sig);
+      if (fresh < 0.98) plumeDraw(c, "vinegar", x, y, s * (1 - fresh), f.wind, sig);
+    }
+    plumeDraw(c, "predator", meta.arena.web[0], meta.arena.web[1], 0.7, f.wind, sig * 0.7);
+    plumeDraw(c, "predator", f.centipede[0], f.centipede[1], 0.8, f.wind, sig * 0.6);
+    for (const q of f.flies) plumeDraw(c, "pheromone", q[1], q[2], 0.35, [0, 0], 6);
+    c.globalCompositeOperation = "source-over";
+  } else {
+    c.globalCompositeOperation = "lighter";
+    for (const p of particles) {
+      const a = Math.sin(Math.PI * p.age / p.life) * 0.22, [x, y] = S(p.x, p.y), r = p.r * z;
+      c.globalAlpha = a; c.drawImage(SOFT[p.name], x - r, y - r, r * 2, r * 2);
+    }
+    c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
   }
+
+  // fruits (fall in when they first appear)
+  for (const [id, x, y, sugar, fresh, byViewer] of f.fruits) {
+    if (!firstSeen.has(id)) firstSeen.set(id, drawnOnce ? now : -1e9);
+    const fall = Math.min(1, (now - firstSeen.get(id)) / 700);
+    const rad = 6 * Math.sqrt(Math.max(sugar, 60) / 500), size = rad * z * 1.45 * (0.6 + 0.4 * Math.min(1, sugar / 500));
+    const [sx, sy] = S(x, y), drop = (1 - fall) * 60;
+    if (fall < 1) { c.fillStyle = `rgba(0,0,0,${0.3 * fall})`; c.beginPath(); c.ellipse(sx, sy, size * fall, size * .7 * fall, 0, 0, 7); c.fill(); }
+    c.drawImage(FRUITS[Math.round((1 - fresh) * 5)], sx - size, sy - size - drop, size * 2, size * 2);
+    if (!smellMode && fresh < 0.5) {   // fermentation bubbles
+      c.fillStyle = "rgba(220,240,160,.55)";
+      for (let b = 0; b < 3; b++) { const ph = (t * .6 + b / 3) % 1; c.beginPath(); c.arc(sx + (b - 1) * size * .35, sy - size * .3 - ph * size * .8, 1 + z * .25 * (1 - ph), 0, 7); c.fill(); }
+    }
+    if (byViewer) { c.strokeStyle = "rgba(240,181,76,.8)"; c.setLineDash([3, 3]); c.lineWidth = 1.5; c.beginPath(); c.arc(sx, sy, size * 1.15, 0, 7); c.stroke(); c.setLineDash([]); }
+  }
+  // pending viewer fruit
+  pending = pending.filter(p => performance.now() - p.at < 90000 && !(f.fruits.some(fr => fr[5] && Math.hypot(fr[1] - p.x, fr[2] - p.y) < 6)));
+  for (const p of pending) { const [sx, sy] = S(p.x, p.y); c.strokeStyle = "rgba(240,181,76,.9)"; c.lineWidth = 2; c.setLineDash([4, 4]);
+    c.beginPath(); c.arc(sx, sy, (6 + 3 * Math.sin(t * 4)) * z * .9, 0, 7); c.stroke(); c.setLineDash([]); }
+  if (ghost) { const size = 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75; c.drawImage(FRUITS[0], sx - size, sy - size, size * 2, size * 2); c.globalAlpha = 1; }
+
   // eggs
-  for (const [x, y, p] of f.eggs || []) {
-    const s = P(2.2) * (1 + 0.15 * Math.sin(now / 300 + x)) * (p > 0.85 ? 1.1 : 1);
-    c.drawImage(EGG, P(x) - s, P(y) - s, s * 2, s * 2);
-  }
-  // selected fly trail
-  if (layers.trail && selected != null) {
-    const pts = []; for (let i = Math.max(0, fi - 20 * 30); i <= fi; i += 2) { const q = frames[i].flies.find(z => z[0] === selected); if (q) pts.push(q); }
-    if (pts.length > 1) {
-      c.lineCap = "round"; c.lineJoin = "round";
+  for (const [x, y, p] of f.eggs || []) { const [sx, sy] = S(x, y), s = 2.4 * z * (1 + .08 * Math.sin(t * 3 + x)); c.drawImage(EGG, sx - s, sy - s, s * 2, s * 2); }
+
+  // lineage lines for the selected fly
+  if (selected != null) {
+    const me = f.flies.find(q => q[0] === selected);
+    if (me) {
+      const [mx, my] = S(me[1], me[2]);
+      c.setLineDash([2, 5]); c.lineWidth = 1.5;
+      const mother = f.flies.find(q => q[0] === me[9]);
+      if (mother) { const [ox, oy] = S(mother[1], mother[2]); c.strokeStyle = "rgba(236,229,207,.8)"; c.beginPath(); c.moveTo(mx, my); c.lineTo(ox, oy); c.stroke(); }
+      c.strokeStyle = "rgba(152,189,108,.9)";
+      for (const q of f.flies) if (q[9] === selected) { const [ox, oy] = S(q[1], q[2]); c.beginPath(); c.moveTo(mx, my); c.lineTo(ox, oy); c.stroke(); }
+      for (const e of f.eggs || []) if (e[3] === selected) { const [ox, oy] = S(e[0], e[1]); c.beginPath(); c.moveTo(mx, my); c.lineTo(ox, oy); c.stroke(); }
+      c.setLineDash([]);
+      // trail
+      const pts = []; for (let i = Math.max(0, fi - 20 * 40); i <= fi; i += 2) { const q = frames[i].flies.find(z => z[0] === selected); if (q) pts.push(q); }
+      c.lineCap = "round";
       for (let i = 1; i < pts.length; i++) {
-        c.strokeStyle = `rgba(245,184,61,${0.15 + 0.6 * i / pts.length})`; c.lineWidth = 2;
-        c.beginPath(); c.moveTo(P(pts[i - 1][1]), P(pts[i - 1][2])); c.lineTo(P(pts[i][1]), P(pts[i][2])); c.stroke();
+        const air = pts[i][4] === 3; const [ax, ay] = S(pts[i - 1][1], pts[i - 1][2]), [bx, by] = S(pts[i][1], pts[i][2]);
+        c.strokeStyle = air ? `rgba(134,181,209,${0.2 + .7 * i / pts.length})` : `rgba(240,181,76,${0.15 + .6 * i / pts.length})`;
+        c.lineWidth = air ? 1.5 : 2; if (air) c.setLineDash([3, 3]); c.beginPath(); c.moveTo(ax, ay); c.lineTo(bx, by); c.stroke(); c.setLineDash([]);
       }
     }
   }
-  // corpses: last known position of flies that died recently
-  for (const d of corpses(f.t)) {
-    const fade = Math.max(0, 1 - (f.t - d.t) / CORPSE_S), size = P(5.5);
-    c.save(); c.globalAlpha = 0.35 + 0.55 * fade; c.translate(P(d.x), P(d.y)); c.rotate(d.h + Math.PI / 2 + 0.4);
-    c.filter = "grayscale(1) brightness(.55)"; c.scale(1, -1);                 // lying on its back
-    if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size);
-    c.restore();
-    c.globalAlpha = 0.5 + 0.5 * fade; c.font = `${Math.max(11, P(4))}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle";
-    c.fillText(DEATH_ICON[d.kind] || "✝", P(d.x) + size * 0.6, P(d.y) - size * 0.6); c.globalAlpha = 1;
+
+  // corpses
+  for (const e of events) {
+    if (!e.kind.startsWith("death_") || e.fly < 0 || e.t > f.t || f.t - e.t > 60 || e.x == null) continue;
+    const fade = 1 - (f.t - e.t) / 60, [sx, sy] = S(e.x, e.y), size = 5.5 * z;
+    c.save(); c.globalAlpha = .35 + .55 * fade; c.translate(sx, sy); c.rotate(0.4 + e.fly); c.scale(1, -1); c.filter = "grayscale(1) brightness(.55)";
+    if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size); c.restore();
+    c.globalAlpha = .5 + .5 * fade; c.font = `${Math.max(12, z * 4)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(DEATH_ICON[e.kind] || "✝", sx + size * .6, sy - size * .6); c.globalAlpha = 1;
   }
+
+  // spider
+  const sp = f.spider, [spx, spy] = S(sp[0], sp[1]), spn = g.spider;
+  drawSpider(c, spx, spy, 9 * z, sp[2], Math.hypot(spn[0] - sp[0], spn[1] - sp[1]) > 0.05, t);
+  // centipede
+  const ce = f.centipede, body = [[ce[0], ce[1]], ...ce[4].slice(1)];
+  drawCentipede(c, body, z, t, ce[3] >= 0);
+  if (ce[3] >= 0) { const [hx, hy] = S(ce[0], ce[1]); c.fillStyle = "rgba(221,106,85,.9)"; c.font = `${Math.max(12, z * 3.5)}px system-ui`; c.textAlign = "center"; c.fillText("!", hx, hy - 4 * z); }
+
   // flies
   const next = new Map(g.flies.map(q => [q[0], q]));
   for (const q of f.flies) {
     const n = next.get(q[0]) || q, lerp = (a, b) => a + (b - a) * k;
     const x = lerp(q[1], n[1]), y = lerp(q[2], n[2]);
     let dh = n[3] - q[3]; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-    const h = q[3] + dh * k;
-    // altitude: flights are short ballistic hops; estimate the phase from consecutive flying frames
-    const alt = altitude(q[0], fi, k);                                          // 0..1
-    const size = P(5.5) * (1 + 0.45 * alt);
-    const off = P(0.6) + P(9) * alt;                                            // shadow drifts away with height
-    c.save(); c.filter = alt > 0.05 ? `blur(${1 + 3 * alt}px)` : "none";
-    c.fillStyle = `rgba(0,0,0,${0.32 - 0.18 * alt})`; c.beginPath();
-    c.ellipse(P(x) + off, P(y) + off, size * (0.28 - 0.06 * alt), size * (0.36 - 0.08 * alt), h + Math.PI / 2, 0, 7); c.fill(); c.restore();
-    if (alt > 0.05) {   // dashed line from fly to its shadow shows height
-      c.strokeStyle = `rgba(255,255,255,${0.5 * alt})`; c.setLineDash([2, 3]); c.lineWidth = 1;
-      c.beginPath(); c.moveTo(P(x), P(y)); c.lineTo(P(x) + off, P(y) + off); c.stroke(); c.setLineDash([]);
+    const h = q[3] + dh * k, alt = lerp(q[11] || 0, n[11] || 0), stuck = q[4] === 4;
+    let [sx, sy] = S(x, y);
+    if (stuck) { sx += Math.sin(t * 40 + q[0]) * z * .4; sy += Math.cos(t * 37 + q[0]) * z * .3; }
+    const size = 5.5 * z * (1 + .6 * alt), off = (.6 + 16 * alt) * z;
+    c.save(); c.filter = alt > .05 ? `blur(${1 + 4 * alt}px)` : "none";
+    c.fillStyle = `rgba(0,0,0,${.32 - .18 * alt})`; c.beginPath(); c.ellipse(sx + off, sy + off, size * (.28 - .08 * alt), size * (.36 - .1 * alt), h + Math.PI / 2, 0, 7); c.fill(); c.restore();
+    if (alt > .05) { c.strokeStyle = `rgba(255,255,255,${.45 * alt})`; c.setLineDash([2, 3]); c.lineWidth = 1; c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + off, sy + off); c.stroke(); c.setLineDash([]); }
+    c.save(); c.translate(sx, sy); c.rotate(h + Math.PI / 2); if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size); c.restore();
+    const life = Math.min(1, q[6] / 3600);
+    c.strokeStyle = `hsla(${120 - 120 * life},75%,58%,.85)`; c.lineWidth = Math.max(1.5, z * .45);
+    c.beginPath(); c.arc(sx, sy, size * .62, -Math.PI / 2, -Math.PI / 2 + 6.283 * Math.max(.03, life)); c.stroke();
+    if (q[6] < 30) { c.fillStyle = `rgba(255,255,220,${.9 - q[6] / 35})`; for (let s = 0; s < 4; s++) { const a = t * 2.5 + s * 1.57; c.beginPath(); c.arc(sx + Math.cos(a) * size * .8, sy + Math.sin(a) * size * .8, 1.6, 0, 7); c.fill(); } }
+    if (stuck) { c.strokeStyle = "#f0b54c"; c.lineWidth = Math.max(2, z * .6); c.beginPath(); c.arc(sx, sy, size * .85, -Math.PI / 2, -Math.PI / 2 + 6.283 * Math.min(1, q[13] || 0)); c.stroke(); }
+    if (q[4] === 1) { c.font = `${Math.max(11, z * 3)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🍯", sx + size * .65, sy - size * .5); }
+    if (q[5] < .15) { c.fillStyle = "#dd6a55"; c.beginPath(); c.arc(sx - size * .55, sy - size * .55, Math.max(2.5, z * .7), 0, 7); c.fill(); }
+    if (q[0] === selected) {
+      c.strokeStyle = "#f0b54c"; c.lineWidth = 2; c.beginPath(); c.arc(sx, sy, size * .95, 0, 7); c.stroke();
+      // antennae: dot size = odor at each antenna, color = strongest odor
+      const sen = q[12] || [];
+      for (const [side, fi2, vi] of [[1, 0, 2], [-1, 1, 3]]) {
+        const ax = x + 1.2 * Math.cos(h) - side * .8 * Math.sin(h), ay = y + 1.2 * Math.sin(h) + side * .8 * Math.cos(h);
+        const [px, py] = S(ax, ay), fr = Math.min(1, sen[fi2] || 0), vn = Math.min(1, sen[vi] || 0), v = Math.max(fr, vn);
+        const col = fr >= vn ? "255,179,71" : "203,232,107";
+        c.fillStyle = `rgba(${col},${.35 + .65 * v})`; c.beginPath(); c.arc(px, py, Math.max(2, z * (.4 + 1.2 * v)), 0, 7); c.fill();
+      }
     }
-    c.save(); c.translate(P(x), P(y)); c.rotate(h + Math.PI / 2);
-    if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size);
-    c.restore();
-    // age ring: fills over an adult life (60 min), green -> red
-    const life = Math.min(1, q[6] / 3600), hue = 120 - 120 * life;
-    c.strokeStyle = `hsla(${hue},80%,55%,.85)`; c.lineWidth = Math.max(1.5, P(0.5));
-    c.beginPath(); c.arc(P(x), P(y), size * 0.62, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.max(0.03, life)); c.stroke();
-    if (q[6] < 30) {   // newborn sparkle
-      c.fillStyle = `rgba(255,255,220,${0.9 - q[6] / 35})`;
-      for (let s = 0; s < 4; s++) { const a = now / 400 + s * 1.57; c.beginPath(); c.arc(P(x) + Math.cos(a) * size * .8, P(y) + Math.sin(a) * size * .8, 1.6, 0, 7); c.fill(); }
-    }
-    if (q[0] === selected) { c.strokeStyle = "#f5b83d"; c.lineWidth = 2; c.beginPath(); c.arc(P(x), P(y), size * 0.85, 0, 7); c.stroke(); }
-    if (q[4] === 1) { c.font = `${Math.max(10, P(3))}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🍯", P(x) + size * .6, P(y) - size * .5); }
-    if (q[5] < 0.15) { c.fillStyle = "#ff6b5b"; c.beginPath(); c.arc(P(x) - size * .55, P(y) - size * .55, 2.5, 0, 7); c.fill(); }
   }
-  // birds diving
+  // birds
   for (const [target, p, dir] of f.shadows) {
-    const q = f.flies.find(z => z[0] === target); if (!q) continue;
-    const pp = Math.min(1, p), dist = (1 - pp) * 70, x = q[1] + Math.cos(dir) * dist, y = q[2] + Math.sin(dir) * dist;
-    drawBird(c, P(x), P(y), P(6 + 26 * pp), dir + Math.PI, 0.2 + 0.45 * pp);
+    const q = f.flies.find(zq => zq[0] === target); if (!q) continue;
+    const pp = Math.min(1, p), d = (1 - pp) * 80, [bx, by] = S(q[1] + Math.cos(dir) * d, q[2] + Math.sin(dir) * d);
+    drawBird(c, bx, by, (6 + 26 * pp) * z, dir + Math.PI, .2 + .45 * pp);
   }
-  // day/night
-  if (L < 0.9) { c.fillStyle = `rgba(10,18,45,${Math.max(0, 0.62 - L * 0.7)})`; c.fillRect(0, 0, W, H); }
+  // night
+  if (L < .9) { c.fillStyle = `rgba(10,18,45,${Math.max(0, .6 - L * .68)})`; c.fillRect(0, 0, W, H); }
+
   const lag = status ? status.sim_s - simT : 0;
-  $("clock").textContent = `${L > 0.55 ? "☀️ День" : L > 0.3 ? "🌇 Сумерки" : "🌙 Ночь"}, ${fmt(f.t)} мирового времени` + (lag > 5 ? `, прямой эфир впереди на ${fmt(lag)}` : "");
-  panel(f);
+  const windDir = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"][Math.round(((Math.atan2(f.wind[1], f.wind[0]) + 6.283) % 6.283) / 0.785) % 8];
+  $("clock").textContent = `${L > .55 ? "☀️ День" : L > .3 ? "🌇 Сумерки" : "🌙 Ночь"}, ${fmt(f.t)}; ветер ${windDir} ${Math.hypot(...f.wind) < .15 ? "слабый" : "заметный"}` +
+    (lag > 5 ? `; прямой эфир впереди на ${fmt(lag)}` : "");
+  drawMini(f);
+  panel(f, fi);
+  drawnOnce = true;
   requestAnimationFrame(draw);
 }
-cv.onclick = e => {
+function drawMini(f) {
+  const m = $("mini"), dpr = devicePixelRatio || 1, W = m.clientWidth, H = m.clientHeight;
+  if (m.width !== W * dpr) { m.width = W * dpr; m.height = H * dpr; }
+  const c = m.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (miniBase) c.drawImage(miniBase, 0, 0, W, H);
+  const sx = W / meta.arena.width, sy = H / meta.arena.height;
+  c.fillStyle = "rgba(255,179,71,.9)"; for (const fr of f.fruits) { c.beginPath(); c.arc(fr[1] * sx, fr[2] * sy, 2, 0, 7); c.fill(); }
+  c.fillStyle = "#dd6a55"; c.beginPath(); c.arc(f.centipede[0] * sx, f.centipede[1] * sy, 3, 0, 7); c.fill();
+  c.fillStyle = "rgba(236,229,207,.75)"; for (const q of f.flies) c.fillRect(q[1] * sx - 1, q[2] * sy - 1, 2, 2);
+  const me = f.flies.find(q => q[0] === selected); if (me) { c.strokeStyle = "#f0b54c"; c.lineWidth = 2; c.beginPath(); c.arc(me[1] * sx, me[2] * sy, 5, 0, 7); c.stroke(); }
+  const [x0, y0] = camera.toWorld(0, 0), [x1, y1] = camera.toWorld(view.clientWidth, view.clientHeight);
+  c.strokeStyle = "rgba(255,255,255,.8)"; c.lineWidth = 1; c.strokeRect(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy);
+}
+function pick(ox, oy) {
   const got = frameAt(simT); if (!got) return;
-  const r = cv.getBoundingClientRect(), S = cv.clientWidth / meta.arena.size;
-  const x = (e.clientX - r.left) / S, y = (e.clientY - r.top) / S;
+  const [x, y] = camera.toWorld(ox, oy);
   let best = null, bd = 1e9;
   for (const q of got[0].flies) { const d = Math.hypot(q[1] - x, q[2] - y); if (d < bd) { bd = d; best = q[0]; } }
-  selected = bd < 10 ? best : null; renderDiary();
-};
+  selected = bd < Math.max(6, 14 / camera.z) ? best : null;
+  if (selected == null) { follow = false; $("follow").classList.remove("on"); }
+  renderFeed();
+}
 
-// ---------------- fly panel ----------------
+// ============ fly card with a causal caption ============
 let panelAge = 0;
-function panel(f) {
-  if (selected == null || performance.now() - panelAge < 100) return;
-  panelAge = performance.now();
+function panel(f, fi) {
+  if (performance.now() - panelAge < 120) return; panelAge = performance.now();
+  if (selected == null) { $("caption").hidden = true; return; }
   const q = f.flies.find(z => z[0] === selected);
   $("flyTitle").textContent = `Муха №${selected}`;
   if (!q) {
     const death = events.find(e => e.fly === selected && e.kind.startsWith("death_"));
-    $("flyInfo").innerHTML = death ? `${DEATH_ICON[death.kind]} погибла в ${fmt(death.t)} — ${DEATH_RU[death.kind]}` : "нет в кадре";
-    $("flyBars").innerHTML = ""; $("nose").innerHTML = ""; return;
+    $("flyInfo").innerHTML = death ? `${DEATH_ICON[death.kind]} ${death.text} в ${fmt(death.t)}` : "Сейчас её нет в кадре.";
+    $("flyBars").innerHTML = $("nose").innerHTML = ""; $("caption").hidden = true; return;
   }
-  const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname] || gname} ×${q[10][i]}`).join(", ");
-  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b></div><div>Поколение <b>${q[8]}</b>${q[9] >= 0 ? `, мать №${q[9]}` : ", из первых мух"}</div>` +
+  const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname]} ×${q[10][i]}`).join(", ");
+  const kids = f.flies.filter(z => z[9] === selected).length, eggs = (f.eggs || []).filter(e => e[3] === selected).length;
+  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b></div>` +
+    `<div>Поколение <b>${q[8]}</b>${q[9] >= 0 ? `, мать №${q[9]}` : ", из первых мух"}; дочерей рядом ${kids}, яиц ${eggs}</div>` +
     `<div class="note" style="margin-top:4px">Гены: ${genes}</div>`;
-  // what the antennae smell (same geometry as the simulation)
-  const h = q[3], ant = side => [q[1] + 1.2 * Math.cos(h) - side * 0.8 * Math.sin(h), q[2] + 1.2 * Math.sin(h) + side * 0.8 * Math.cos(h)];
-  const [lx, ly] = ant(1), [rx, ry] = ant(-1);
-  const others = { ...f, flies: f.flies.filter(z => z[0] !== selected) };
-  const row = (name, label, color) => {
-    const a = Math.min(1, odorAt(others, name, lx, ly)), b = Math.min(1, odorAt(others, name, rx, ry));
-    const cell = v => `<div class="track"><div class="fill" style="width:${v * 100}%;background:${color}"></div></div>`;
-    return `<span>${label}</span>${cell(a)}${cell(b)}`;
-  };
+  $("caption").hidden = false; $("caption").innerHTML = caption(fi) || `<span class="dim">Ничего заметного за последние секунды.</span>`;
+  const sen = q[12] || [];
+  const cell = (v, col) => `<div class="track"><div class="fill" style="width:${Math.min(1, v) * 100}%;background:${col}"></div></div>`;
   $("nose").innerHTML = `<div class="nose"><span class="h">запах</span><span class="h">левый усик</span><span class="h">правый усик</span>
-    ${row("fruit", "еда", "var(--fruit)")}${row("spider", "паук", "var(--spider)")}${row("fly", "мухи", "var(--fly)")}</div>`;
-  const names = meta.readout, vals = q[7];
-  const rows = [["энергия", q[5], 1, "var(--moss)", (q[5] * 100).toFixed(0) + "%"],
-    ...names.map((n, i) => [n, vals[i], 150, n.startsWith("GF") ? "var(--blood)" : n === "MN9" ? "#c98a1d" : "#4f7f9f", vals[i] + " Гц"])];
-  $("flyBars").innerHTML = rows.map(([n, v, max, col, label]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill" style="width:${Math.min(100, v / max * 100)}%;background:${col}"></div></div><span class="dim">${label}</span></div>`).join("");
+    <span>фрукт</span>${cell(sen[0] || 0, "#e89a2a")}${cell(sen[1] || 0, "#e89a2a")}
+    <span>уксус</span>${cell(sen[2] || 0, "#9fbf3a")}${cell(sen[3] || 0, "#9fbf3a")}
+    <span>хищник</span>${cell(sen[4] || 0, "#7a61d9")}${cell(sen[4] || 0, "#7a61d9")}</div>`;
+  const names = meta.readout, vals = q[7], show = ["DNa01 L", "DNa01 R", "DNa02 L", "DNa02 R", "GF", "DNp04", "DNp11", "MDN", "MN9", "DNp09"];
+  const rows = [["энергия", q[5], 1, "#6f9a44", `${Math.round(q[5] * 100)}%`],
+    ...show.filter(n => names.includes(n)).map(n => { const v = vals[names.indexOf(n)];
+      return [n, v, 150, n === "GF" || n.startsWith("DNp0") && n !== "DNp09" || n === "DNp11" ? "#c24e3a" : n === "MN9" ? "#c98a1d" : "#4f7f9f", `${v} Гц`]; })];
+  $("flyBars").innerHTML = rows.map(([n, v, max, col, label]) => `<div class="bar"><span>${n}</span>${cell(v / max, col)}<span class="dim">${label}</span></div>`).join("");
 }
-function renderDiary() {
-  const list = selected == null ? events.slice(-40) : events.filter(e => e.fly === selected);
-  $("diary").innerHTML = list.slice(-60).reverse().map(e => `<li><span class="t">${fmt(e.t)}</span>${selected == null ? `№${e.fly}: ` : ""}${e.text}</li>`).join("") || `<li class="dim">пока ничего</li>`;
+function caption(fi) {
+  // a chain of measured changes over the last ~4 s for the selected fly
+  const items = [], names = meta.readout, r = n => names.indexOf(n);
+  let prev = null;
+  for (let i = Math.max(0, fi - 80); i <= fi; i += 2) {
+    const q = frames[i].flies.find(z => z[0] === selected); if (!q) continue;
+    const s = q[12] || [], v = q[7];
+    if (prev) {
+      const ps = prev[12] || [], pv = prev[7];
+      const fr = s[0] - s[1], pfr = ps[0] - ps[1];
+      if (Math.abs(fr) > .04 && Math.sign(fr) !== Math.sign(pfr)) items.push(`запах плода ${fr > 0 ? "слева" : "справа"}`);
+      if (s[4] > .25 && ps[4] <= .25) items.push("запах хищника");
+      if (s[5] > .25 && ps[5] <= .25) items.push("надвигается объект → LC4/LPLC2");
+      if (s[6] && !ps[6]) items.push("упёрлась головой (щетинки)");
+      if (s[7] > .1 && ps[7] <= .1) items.push("вкус сахара");
+      if (v[r("DNp04")] > 40 && pv[r("DNp04")] <= 40) items.push("<b>DNp04 ↑</b>");
+      if (v[r("GF")] > 60 && pv[r("GF")] <= 60) items.push("<b>гигантское волокно ↑</b>");
+      if (v[r("MN9")] > 15 && pv[r("MN9")] <= 15) items.push("<b>MN9 ↑</b>");
+      const turn = (v[r("DNa01 L")] + v[r("DNa02 L")]) - (v[r("DNa01 R")] + v[r("DNa02 R")]), pturn = (pv[r("DNa01 L")] + pv[r("DNa02 L")]) - (pv[r("DNa01 R")] + pv[r("DNa02 R")]);
+      if (Math.abs(turn - pturn) > 40) items.push(`DNa ${turn > pturn ? "левые" : "правые"} ↑`);
+      if (q[4] !== prev[4]) items.push(`<b>${STATE[q[4]]}</b>`);
+    }
+    prev = q;
+  }
+  const dedup = items.filter((x, i) => x !== items[i - 1]).slice(-7);
+  return dedup.map(x => `<span>${x}</span>`).join(` <span class="arrow">→</span> `);
 }
 
-// ---------------- population chart ----------------
+// ============ feed ============
+function renderFeed() {
+  const tNow = simT ?? 0;
+  const noisy = ["feed", "web_struggle", "hop"];
+  const list = events.filter(e => e.t <= tNow + 0.1 &&
+    (selected == null ? (e.fly === -1 || !noisy.includes(e.kind)) : (e.fly === selected || e.fly === -1))).slice(-80).reverse();
+  $("feed").innerHTML = list.map((e, i) => `<li data-i="${i}"><span class="t">${fmt(e.t)}</span>${FEED_ICON[e.kind] || "·"} ${e.fly >= 0 ? `№${e.fly} ` : ""}${e.text}</li>`).join("") ||
+    `<li class="dim">Пока тихо.</li>`;
+  $("feed").querySelectorAll("li[data-i]").forEach(li => li.onclick = () => {
+    const e = list[+li.dataset.i]; if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 5); camera.clamp(); }
+    if (e.fly >= 0) selected = e.fly; if (simT != null && e.t < simT && frames.length && e.t >= frames[0].t) simT = e.t - 2;
+  });
+}
+
+// ============ census ============
 function drawPop() {
-  const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 160;
+  const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 170;
   cv2.width = W * dpr; cv2.height = H * dpr; const c = cv2.getContext("2d"); c.scale(dpr, dpr);
   if (!frames.length) return;
-  const step = Math.max(1, Math.floor(frames.length / W));
-  const pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
-  const maxN = Math.max(8, ...pts.map(f => f.flies.length));
-  const X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
-  c.strokeStyle = "#34402f"; c.fillStyle = "#a39f8a"; c.font = "12px 'Alegreya Sans', sans-serif";
-  for (const v of [0.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 20); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
-  c.fillStyle = "rgba(235,228,207,.10)";
-  pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 20); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
+  const step = Math.max(1, Math.floor(frames.length / W)), pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
+  const maxN = Math.max(8, ...pts.map(f => f.flies.length)), X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
+  c.strokeStyle = "#34402f"; c.fillStyle = "#a7a28b"; c.font = "12px 'Alegreya Sans', sans-serif";
+  for (const v of [.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 24); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
+  c.fillStyle = "rgba(236,229,207,.1)"; pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 24); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
   (meta?.genes || []).forEach((gname, gi) => {
     c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath();
-    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + (q[10] ? q[10][gi] : 1), 0) / f.flies.length;
-      const y = H - 10 - Math.min(2, m) / 2 * (H - 20); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
-    c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 12);
+    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + q[10][gi], 0) / f.flies.length;
+      const y = H - 10 - Math.min(2, m) / 2 * (H - 24); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
+    c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 13);
   });
-  c.fillStyle = "#a39f8a"; c.fillText(`светлые столбики — число мух, максимум ${maxN}`, W - 250, 12);
+  c.fillStyle = "#a7a28b"; c.fillText(`светлые столбики — число мух, максимум ${maxN}`, W - 260, 13);
 }
 
-setInterval(() => { refresh().then(renderDiary); }, 3000);
-refresh().then(renderDiary); draw();
+addEventListener("resize", () => camera.clamp());
+setInterval(refresh, 3000);
+refresh(); draw();
 </script>
 </body>
 </html>
