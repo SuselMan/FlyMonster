@@ -41,6 +41,24 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.startswith("/api/life/") and self.path.endswith("/command"):
+            # /api/life/<run>/command: append a viewer command for the running world
+            run = self.path.split("/")[3]
+            target = ROOT / "results" / run
+            if not run.startswith("life_") or "/" in run or ".." in run or not target.is_dir():
+                self.send_error(404)
+                return
+            try:
+                cmd = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if cmd.get("type") != "fruit":
+                    raise ValueError("unknown command")
+                line = {"type": "fruit", "x": float(cmd["x"]), "y": float(cmd["y"]), "size": float(cmd.get("size", 1.0))}
+                with open(target / "commands.jsonl", "a", encoding="utf-8") as f:
+                    f.write(json.dumps(line) + "\n")
+                self._send(b'{"ok": true}', "application/json")
+            except Exception as e:
+                self.send_error(400, str(e))
+            return
         if self.path != "/api/brain/stimulate":
             self.send_error(404)
             return

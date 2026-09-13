@@ -14,7 +14,7 @@ import torch
 ODORANTS = {
     "fruit": {"ORN_DM1": 1.0, "ORN_DM2": 0.8, "ORN_DM4": 0.7, "ORN_VA2": 0.5, "ORN_DL1": 0.3},
     "vinegar": {"ORN_DM1": 0.6, "ORN_DP1m": 1.0, "ORN_VM2": 0.7, "ORN_DC2": 0.5},
-    "spider": {"ORN_DA2": 1.0, "ORN_VA3": 0.7, "ORN_DL3": 0.6, "ORN_VM4": 0.4},
+    "spider": {"ORN_DA2": 1.0, "ORN_VA3": 0.7, "ORN_DL3": 0.6, "ORN_VM4": 0.4},     # predators (spider, centipede)
     "fly": {"ORN_DA1": 1.0, "ORN_VA1d": 0.8, "ORN_VA1v": 0.6},   # pheromone-like
 }
 
