@@ -62,6 +62,21 @@ connectome and the published LIF model. Around it:
   this connectome carry a static left bias).
 - **Hunger** lowers the threshold of NPF neurons and raises sugar sensitivity.
 - **One female fly's wiring**: every fly has the same connectome.
+- **The world is scripted** (`life/arena.py`), the flies are not: nothing in
+  the world tells a fly where to go. Food has causes and is finite: apples only
+  when a viewer drops them, predator droppings after a meal, bodies of flies
+  that died of hunger/age after decomposing. Droppings and bodies reuse the
+  "vinegar" odorant (fermenting matter) rather than an invented new receptor
+  profile. Food size, odor and taste follow the remaining amount; flies and
+  ants eat it away. The world starts with a few old droppings.
+- **Animals**: the spider builds webs where a running heatmap says flies walk
+  (or near food), webs weaken with age and when flies tear free; the centipede
+  hunts by sight/vibration; both have hunger (hunt only when hungry, slow down
+  and rest when starving); ants forage and carry food home; birds dive in
+  daylight. Flies perceive all of them only through vision salience, looming,
+  odor and touch. Tuning numbers are ours (ArenaConfig).
+- **Flight metrics** (long flights, landing across water) are counted for
+  checking, they do not trigger anything.
 
 ## Setup
 

@@ -3,37 +3,75 @@
 Units: millimetres and seconds. A fly is ~3 mm long and walks ~10-20 mm/s.
 Everything here is the world model (scripted); only the flies have brains.
 
-- Fruits fall from the canopy, ripen into rot over minutes (odor shifts from
-  "fruit" to "vinegar" as they ferment) and vanish when rotten or eaten.
-- Wind slowly changes; odor plumes are stretched downwind.
-- Water and stones block walking but not flying.
-- A spider waits in a sticky web and walks to stuck flies.
+Food ecology (every food item has a cause and a finite amount):
+- Apples appear only when a viewer drops them (commands file). They ferment
+  over minutes: odor shifts from "fruit" to "vinegar".
+- Predators leave droppings some time after eating a fly.
+- Flies that die of hunger or old age leave a body; after a delay it
+  decomposes into a small food portion.
+- Droppings and decomposing bodies reuse the "vinegar" odor channel
+  (fermenting / decaying matter) instead of a new odorant: fewer invented
+  receptor profiles; this is a modelling choice.
+- Every item has an amount that shrinks while flies and ants eat it; its
+  size, odor strength and taste follow the remaining amount. Leftovers rot
+  (fruit), dry out (droppings) or decay (bodies) and disappear.
+- The world starts with a few old droppings so the first flies are not born
+  into an empty world (again a choice, not a measurement).
+
+Animals (all scripted):
+- A spider builds webs where flies walk often (running heatmap of fly
+  positions) or near food, spends seconds building, waits, and walks to flies
+  stuck on any of its webs. Webs age: strength, stickiness radius and
+  visibility fade until they disappear. At most `max_webs` at a time.
 - A centipede roams and hunts flies it sees (cone) or feels (vibration).
-- Birds dive at flies in daylight.
-- Viewers can drop fruit through a commands file.
+- Both predators have energy: they hunt/build only when hungry, and when
+  starving they slow down and rest. They never die.
+- Ants from a nest search for food, eat, carry portions home and return to
+  food a nestmate found (simple recruitment). They do not harm flies.
+- Birds dive at flies in daylight. Wind slowly changes; odor plumes are
+  stretched downwind. Water and stones block walking but not flying.
 """
 import json
 from dataclasses import dataclass, field
 
 import numpy as np
 
+KINDS = ("fruit", "dropping", "corpse")
+
 
 @dataclass
-class Fruit:
+class Food:
     id: int
+    kind: str                   # "fruit" | "dropping" | "corpse"
     x: float
     y: float
-    sugar: float
+    amount: float               # sugar-equivalent units left (a fly eats ~5/s)
+    amount0: float
     born: float
-    rot_time: float = 480.0     # s until fully fermented
-    radius: float = 6.0
+    ready_at: float             # a body is not food until it has decomposed a while
+    life: float                 # s: fruit rot time; droppings/bodies: time until gone after ready
+    r0: float                   # mm, radius when whole
     by_viewer: bool = False
+    source: int = -1            # fly id for a body, -1 otherwise
+    announced: bool = False     # ants found it / a body became food (for the feed)
+    ant_seen: bool = False
 
     def freshness(self, t: float) -> float:
-        return float(np.clip(1 - (t - self.born) / self.rot_time, 0, 1))
+        if self.kind != "fruit":
+            return 0.0
+        return float(np.clip(1 - (t - self.born) / self.life, 0, 1))
 
-    def strength(self) -> float:
-        return float(min(1.0, self.sugar / 60.0))
+    def decay(self, t: float) -> float:
+        """0 fresh .. 1 gone (time part only)."""
+        if self.kind == "fruit":
+            return float(np.clip((t - self.born) / (self.life * 1.6), 0, 1))
+        return float(np.clip((t - self.ready_at) / self.life, 0, 1))
+
+    def ready(self, t: float) -> bool:
+        return t >= self.ready_at
+
+    def radius(self) -> float:
+        return self.r0 * (0.5 + 0.5 * np.sqrt(max(self.amount, 0) / self.amount0))
 
 
 @dataclass
@@ -63,15 +101,40 @@ class Shadow:
 
 
 @dataclass
+class Web:
+    id: int
+    x: float
+    y: float
+    r: float                   # mm, full radius
+    started: float
+    build: float = 0.0         # 0..1 while the spider builds it
+    done_at: float | None = None
+    strength: float = 1.0      # 1 new .. 0 gone; drops with age and when flies tear free
+
+    def radius(self) -> float:
+        if self.done_at is None:
+            return self.r * self.build
+        return self.r * (0.5 + 0.5 * self.strength)
+
+    def sticky(self) -> bool:
+        return self.done_at is not None or self.build >= 0.25
+
+
+@dataclass
 class Spider:
-    home_x: float
-    home_y: float
-    web_r: float
-    x: float = 0.0
-    y: float = 0.0
+    x: float
+    y: float
     heading: float = 0.0
     target: int | None = None
     speed: float = 6.0
+    energy: float = 0.5
+    state: str = "wait"        # wait | travel | build | rest
+    site: tuple | None = None
+    web: int | None = None     # web being built
+    timer: float = 0.0
+    detour: float = 1.0
+    last_build: float = -1e9
+    starving: bool = False
 
 
 @dataclass
@@ -86,33 +149,81 @@ class Centipede:
     see_range: float = 45.0
     see_half_angle: float = 1.0
     feel_range: float = 12.0
+    energy: float = 0.5
+    rest: float = 0.0          # s left of a rest bout
+    starving: bool = False
 
 
 @dataclass
 class ArenaConfig:
     width: float = 600.0
     height: float = 400.0
-    fruit_target: int = 9            # fruits the canopy tends to keep on the ground
-    fruit_rate: float = 1 / 45.0     # fruits falling per second (if below target)
-    fruit_sugar: float = 500.0
+    fruit_sugar: float = 250.0       # a viewer apple of size 1
+    odor_ref: float = 120.0          # amount at which a source smells at full strength
     odor_sigma: float = 30.0
     shadow_rate: float = 1 / 25.0    # bird attacks per second on the whole world (daylight)
     day_length: float = 600.0
-    seed_obstacles: int = 11
+    # food from the ecology
+    initial_droppings: int = 5
+    dropping_food: float = 70.0
+    dropping_delay: tuple = (60.0, 120.0)   # s after a meal
+    dropping_life: float = 420.0            # s until dried out
+    corpse_food: float = 35.0
+    corpse_delay: float = 45.0              # s until a body has decomposed enough to feed on
+    corpse_life: float = 300.0
+    heat_cell: float = 20.0                 # mm, heatmap resolution
+    heat_tau: float = 300.0                 # s, memory of the heatmap
+    # spider
+    max_webs: int = 3
+    web_radius: tuple = (16.0, 24.0)
+    web_build_time: float = 25.0
+    web_life: float = 360.0                 # s after completion until it has decayed away
+    web_cooldown: float = 45.0              # s between starting webs
+    spider_hunger_s: float = 600.0          # full -> empty energy
+    spider_meal: float = 0.6
+    spider_hungry: float = 0.75             # builds webs below this energy
+    # centipede
+    centipede_hunger_s: float = 500.0
+    centipede_meal: float = 0.6
+    centipede_hungry: float = 0.6           # hunts below this energy
+    starving: float = 0.15                  # predators slow down and rest below this
+    # ants
+    n_ants: int = 6
+    ant_speed: float = 16.0
+    ant_carry_speed: float = 11.0
+    ant_sense: float = 45.0                 # mm, finds food by smell/sight within this range
+    ant_bite: float = 12.0                  # units carried per trip
+    ant_eat_rate: float = 4.0               # units/s while taking a portion
+    ant_search: float = 90.0                # s of searching before returning home empty
+    ant_nest_rest: float = 6.0
+
+
+ANT_SEARCH, ANT_TO_FOOD, ANT_EAT, ANT_HOME, ANT_NEST = range(5)
 
 
 @dataclass
 class Arena:
     cfg: ArenaConfig
     rng: np.random.Generator
-    fruits: list = field(default_factory=list)
+    food: list = field(default_factory=list)
     obstacles: list = field(default_factory=list)
     shadows: list = field(default_factory=list)
+    webs: list = field(default_factory=list)
     spider: Spider | None = None
     centipede: Centipede | None = None
     wind: np.ndarray = field(default_factory=lambda: np.zeros(2))
-    next_fruit_id: int = 0
+    next_food_id: int = 0
+    next_web_id: int = 0
     log: list = field(default_factory=list)     # world events for the feed
+    pending_droppings: list = field(default_factory=list)   # (t_due, predator)
+    heat: np.ndarray = None
+    nest: tuple = (0.0, 0.0)
+    nest_food: float = 0.0
+    nest_known: int = -1        # food id a returning ant reported
+    ants: dict = None
+    counters: dict = field(default_factory=dict)
+    _food_cache: tuple = (None, None)
+    _version: int = 0
 
     @staticmethod
     def create(cfg: ArenaConfig, seed: int) -> "Arena":
@@ -128,11 +239,23 @@ class Arena:
             Obstacle("stone", W * 0.10, H * 0.72, 16, 16, 0.0),
             Obstacle("stone", W * 0.64, H * 0.14, 11, 11, 0.0),
         ]
-        a.spider = Spider(W * 0.30, H * 0.42, 22.0)
-        a.spider.x, a.spider.y = a.spider.home_x, a.spider.home_y
+        a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
+        a.spider = Spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
         a.centipede = Centipede(W * 0.85, H * 0.55, float(a.rng.uniform(-np.pi, np.pi)))
-        for _ in range(6):
-            a.drop_fruit(0.0, announce=False, age=float(a.rng.uniform(0, 200)))
+        a.nest = (W * 0.93, H * 0.08)
+        n = cfg.n_ants
+        a.ants = {"x": np.full(n, a.nest[0]), "y": np.full(n, a.nest[1]), "h": a.rng.uniform(-np.pi, np.pi, n),
+                  "state": np.full(n, ANT_NEST), "target": np.full(n, -1), "carry": np.zeros(n),
+                  "timer": a.rng.uniform(0, 20, n), "detour": np.ones(n)}
+        a.counters = {"droppings": 0, "corpse_food": 0, "webs_built": 0, "ant_trips": 0, "food_by_ants": 0.0}
+        # the world starts mid-ecology: a few old droppings, already partly dried
+        for _ in range(cfg.initial_droppings):
+            x, y = a.free_spot()
+            a.add_food("dropping", 0.0, x, y, cfg.dropping_food, age=float(a.rng.uniform(0, 150)))
+        # the spider starts with one finished web at its first spot
+        w = Web(a.next_web_id, a.spider.x, a.spider.y, float(np.mean(cfg.web_radius)), 0.0, 1.0, 0.0)
+        a.next_web_id += 1
+        a.webs.append(w)
         return a
 
     # --- geometry --------------------------------------------------------------
@@ -142,30 +265,110 @@ class Arena:
             out |= o.inside(px, py, pad)
         return out
 
+    def in_water(self, px, py):
+        out = np.zeros_like(np.asarray(px, dtype=float), dtype=bool)
+        for o in self.obstacles:
+            if o.kind == "water":
+                out |= o.inside(px, py)
+        return out
+
     def free_spot(self, margin: float = 20.0):
         for _ in range(200):
             x = float(self.rng.uniform(margin, self.cfg.width - margin))
             y = float(self.rng.uniform(margin, self.cfg.height - margin))
-            if not self.blocked(x, y, pad=8) and np.hypot(x - self.spider.home_x, y - self.spider.home_y) > self.spider.web_r + 15:
+            if not self.blocked(x, y, pad=8) and not self.in_web(x, y, pad=15) and \
+                    np.hypot(x - self.nest[0], y - self.nest[1]) > 25:
                 return x, y
         return self.cfg.width / 2, self.cfg.height / 2
 
-    def in_web(self, px, py):
-        s = self.spider
-        return np.hypot(px - s.home_x, py - s.home_y) < s.web_r
+    def near_free(self, x, y):
+        """A walkable spot close to (x, y)."""
+        for r in (0.0, 4.0, 8.0, 14.0, 22.0, 35.0):
+            for a in np.linspace(0, 2 * np.pi, 8, endpoint=False):
+                px = float(np.clip(x + r * np.cos(a), 5, self.cfg.width - 5))
+                py = float(np.clip(y + r * np.sin(a), 5, self.cfg.height - 5))
+                if not self.blocked(px, py, pad=2):
+                    return px, py
+                if r == 0:
+                    break
+        return self.free_spot()
 
-    # --- fruits ---------------------------------------------------------------
-    def drop_fruit(self, t: float, x=None, y=None, sugar=None, announce=True, by_viewer=False, age=0.0):
-        if x is None:
-            x, y = self.free_spot()
-        f = Fruit(self.next_fruit_id, float(x), float(y), float(sugar or self.cfg.fruit_sugar), t - age,
-                  radius=6.0 * float(np.sqrt((sugar or self.cfg.fruit_sugar) / self.cfg.fruit_sugar)), by_viewer=by_viewer)
-        self.next_fruit_id += 1
-        self.fruits.append(f)
-        if announce:
-            self.log.append({"t": round(t, 2), "kind": "fruit_drop", "x": round(f.x), "y": round(f.y),
-                             "text": "зритель положил плод" if by_viewer else "с дерева упал плод"})
+    def steer(self, x, y, want, speed, dt, detour, pad=1.0):
+        """Vectorised walking toward headings `want`; sliding around obstacles and map edges."""
+        W, H = self.cfg.width, self.cfg.height
+        x, y, want, speed, detour = (np.atleast_1d(np.asarray(v, dtype=float)).copy() for v in (x, y, want, speed, detour))
+        heading = want.copy()
+        nx, ny = x.copy(), y.copy()
+        todo = np.ones(len(x), dtype=bool)
+        for rot in (0.0, 0.8, 1.6, -0.8, -1.6, 2.4, -2.4):
+            if not todo.any():
+                break
+            h = want + detour * rot
+            tx, ty = x + speed * np.cos(h) * dt, y + speed * np.sin(h) * dt
+            ok = todo & (tx > 3) & (tx < W - 3) & (ty > 3) & (ty < H - 3) & ~self.blocked(tx, ty, pad)
+            nx[ok], ny[ok], heading[ok] = tx[ok], ty[ok], h[ok]
+            if rot < 0:
+                detour[ok] = -detour[ok]
+            todo &= ~ok
+        heading[todo] = want[todo] + np.pi / 2          # boxed in: turn and try next step
+        return nx, ny, heading, detour
+
+    # --- food -----------------------------------------------------------------
+    def add_food(self, kind, t, x, y, amount, by_viewer=False, age=0.0, source=-1):
+        cfg = self.cfg
+        if kind == "fruit":
+            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age, 480.0,
+                     6.0 * float(np.sqrt(amount / 500.0)) + 1.5, by_viewer)
+        elif kind == "dropping":
+            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age, cfg.dropping_life, 3.0)
+        else:
+            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.corpse_delay,
+                     cfg.corpse_life, 2.5, source=source)
+        self.next_food_id += 1
+        self.food.append(f)
+        self._version += 1
         return f
+
+    def drop_fruit(self, t: float, x, y, sugar=None, by_viewer=True):
+        f = self.add_food("fruit", t, float(x), float(y), float(sugar or self.cfg.fruit_sugar), by_viewer=by_viewer)
+        self.log.append({"t": round(t, 2), "kind": "fruit_drop", "x": round(f.x), "y": round(f.y),
+                         "text": "зритель положил яблоко"})
+        return f
+
+    def food_arrays(self, t: float) -> dict:
+        """Per-step arrays over food items (cached for the step)."""
+        key = (t, self._version)
+        if self._food_cache[0] == key:
+            return self._food_cache[1]
+        F = self.food
+        amount = np.array([f.amount for f in F], dtype=float)
+        ready = np.array([f.ready(t) for f in F], dtype=bool)
+        fresh = np.array([f.freshness(t) for f in F])
+        decay = np.array([f.decay(t) for f in F])
+        kind = np.array([KINDS.index(f.kind) for f in F], dtype=int)
+        s = np.clip(amount / self.cfg.odor_ref, 0, 1) * ready
+        scale = np.where(kind == 0, 1.0, np.where(kind == 1, 1.0, 0.8)) * np.where(kind == 0, 1.0, 1 - 0.5 * decay)
+        out = {
+            "x": np.array([f.x for f in F], dtype=float), "y": np.array([f.y for f in F], dtype=float),
+            "r": np.array([f.radius() for f in F], dtype=float), "amount": amount, "kind": kind,
+            "edible": ready & (amount > 0.5),
+            "fruit": s * fresh, "vinegar": s * (1 - fresh) * np.where(kind == 0, 1.2, 1.0) * scale,
+            "taste": np.clip(amount / 20.0, 0, 1) * ready,
+        }
+        self._food_cache = (key, out)
+        return out
+
+    def fly_died(self, t, fid, kind, x, y):
+        """Bodies of flies that died of hunger or age decompose into food."""
+        if kind in ("starved", "old"):
+            px, py = self.near_free(x, y)
+            self.add_food("corpse", t, px, py, self.cfg.corpse_food, source=fid)
+
+    def predator_ate(self, who: str, t: float):
+        cfg = self.cfg
+        p = self.spider if who == "spider" else self.centipede
+        p.energy = min(1.0, p.energy + (cfg.spider_meal if who == "spider" else cfg.centipede_meal))
+        self.pending_droppings.append((t + float(self.rng.uniform(*cfg.dropping_delay)), who))
 
     def light(self, t: float) -> float:
         phase = (t % self.cfg.day_length) / self.cfg.day_length
@@ -189,33 +392,81 @@ class Arena:
             return amount * np.exp(-(along ** 2) / (2 * s_along ** 2) - cross ** 2 / (2 * sigma ** 2))
 
         if name in ("fruit", "vinegar"):
-            if self.fruits:   # all fruits at once: sources along a trailing axis
-                fx = np.array([f.x for f in self.fruits])
-                fy = np.array([f.y for f in self.fruits])
-                fr = np.array([f.freshness(t) for f in self.fruits])
-                amount = np.array([f.strength() for f in self.fruits]) * (fr if name == "fruit" else (1 - fr) * 1.2)
-                c = plume(fx, fy, amount, sig).sum(-1)
+            if self.food:   # all sources at once along a trailing axis
+                fa = self.food_arrays(t)
+                c = plume(fa["x"], fa["y"], fa[name], sig).sum(-1)
         elif name == "spider":
-            c += plume(self.spider.home_x, self.spider.home_y, 0.8, sig * 0.7)
+            c += plume(self.spider.x, self.spider.y, 0.8, sig * 0.7)
         elif name == "centipede":
             c += plume(self.centipede.x, self.centipede.y, 1.0, sig * 0.6)
         return c
 
+    # --- webs -------------------------------------------------------------------
+    def in_web(self, px, py, pad: float = 0.0):
+        """Id+1 of the sticky web at each point, 0 if none."""
+        out = np.zeros(np.shape(px), dtype=int)
+        for w in self.webs:
+            if w.sticky() or pad > 0:
+                hit = (np.hypot(np.asarray(px) - w.x, np.asarray(py) - w.y) < w.radius() + pad) & (out == 0)
+                out = np.where(hit, w.id + 1, out)
+        return out
+
+    def web(self, wid: int) -> Web | None:
+        return next((w for w in self.webs if w.id == wid), None)
+
+    def tear_web(self, wid: int, t: float, damage: float = 0.25):
+        w = self.web(wid)
+        if w is not None:
+            w.strength -= damage
+
+    def _web_site(self):
+        """Where to build: cells flies walked through lately, plus smell of food nearby."""
+        cfg = self.cfg
+        cs = cfg.heat_cell
+        gy, gx = np.mgrid[0:self.heat.shape[0], 0:self.heat.shape[1]]
+        cx, cy = (gx.ravel() + 0.5) * cs, (gy.ravel() + 0.5) * cs
+        score = self.heat.ravel() / max(self.heat.max(), 1e-6)
+        if self.food:
+            fx = np.array([f.x for f in self.food])
+            fy = np.array([f.y for f in self.food])
+            fam = np.array([min(1.0, f.amount / cfg.odor_ref) for f in self.food])
+            d = np.hypot(cx[:, None] - fx, cy[:, None] - fy)
+            score = score + 0.6 * (fam * np.exp(-d ** 2 / (2 * 35.0 ** 2))).sum(1)
+            too_close_food = (d < 14).any(1)
+        else:
+            too_close_food = np.zeros(len(cx), dtype=bool)
+        r = cfg.web_radius[1]
+        ok = ~self.blocked(cx, cy, pad=r * 0.6) & (cx > r) & (cx < cfg.width - r) & (cy > r) & (cy < cfg.height - r)
+        ok &= ~too_close_food & (np.hypot(cx - self.nest[0], cy - self.nest[1]) > 40)
+        for w in self.webs:
+            ok &= np.hypot(cx - w.x, cy - w.y) > w.r + r + 6
+        if not ok.any():
+            return None
+        score = np.where(ok, score + 0.05 * self.rng.random(len(score)), -np.inf)
+        top = np.argsort(-score)[:5]
+        top = top[np.isfinite(score[top])]
+        j = int(self.rng.choice(top))
+        jitter = self.rng.uniform(-cs / 3, cs / 3, 2)
+        x, y = float(cx[j] + jitter[0]), float(cy[j] + jitter[1])
+        if self.blocked(x, y, pad=r * 0.6):
+            x, y = float(cx[j]), float(cy[j])
+        return x, y
+
     # --- world update -----------------------------------------------------------
     def update(self, t: float, dt: float, flies: dict):
-        """flies: {"ids", "x", "y", "stuck", "airborne", "moving"} arrays of living flies."""
+        """flies: {"ids", "x", "y", "stuck" (web id+1 or 0), "airborne", "moving"} arrays of living flies."""
         cfg = self.cfg
         # wind drifts slowly
         self.wind += self.rng.normal(0, 0.03, 2) * np.sqrt(dt) - self.wind * 0.02 * dt
         self.wind = np.clip(self.wind, -0.8, 0.8)
-        # fruits fall, rot, disappear
-        if len(self.fruits) < cfg.fruit_target and self.rng.random() < cfg.fruit_rate * dt:
-            self.drop_fruit(t)
-        for f in list(self.fruits):
-            if f.sugar <= 1 or t - f.born > f.rot_time * 1.6:
-                self.fruits.remove(f)
-                self.log.append({"t": round(t, 2), "kind": "fruit_gone", "x": round(f.x), "y": round(f.y),
-                                 "text": "плод съеден" if f.sugar <= 1 else "плод сгнил и исчез"})
+        # heatmap of where flies walk
+        self.heat *= np.exp(-dt / cfg.heat_tau)
+        walk = ~np.asarray(flies["airborne"], dtype=bool)
+        if walk.any():
+            gx = np.clip((np.asarray(flies["x"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[1] - 1)
+            gy = np.clip((np.asarray(flies["y"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[0] - 1)
+            np.add.at(self.heat, (gy, gx), dt)
+        self._food_update(t)
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
@@ -223,45 +474,161 @@ class Arena:
             fid = ids[int(self.rng.integers(len(ids)))]
             if not any(s.target == fid for s in self.shadows):
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
+        self._webs(t, dt)
         self._spider(t, dt, flies)
         self._centipede(t, dt, flies)
+        self._ants(t, dt)
+
+    def _event(self, t, kind, x, y, text):
+        self.log.append({"t": round(t, 2), "kind": kind, "x": round(float(x)), "y": round(float(y)), "text": text})
+
+    def _food_update(self, t):
+        cfg = self.cfg
+        for due, who in [p for p in self.pending_droppings if p[0] <= t]:
+            self.pending_droppings.remove((due, who))
+            p = self.spider if who == "spider" else self.centipede
+            x, y = self.near_free(p.x, p.y)
+            self.add_food("dropping", t, x, y, cfg.dropping_food)
+            self.counters["droppings"] += 1
+            self._event(t, "dropping", x, y, "паук оставил помёт — еда" if who == "spider" else "сороконожка оставила помёт — еда")
+        for f in list(self.food):
+            if f.kind == "corpse" and not f.announced and f.ready(t) and f.amount > 0.5:
+                f.announced = True
+                self.counters["corpse_food"] += 1
+                self._event(t, "corpse_food", f.x, f.y, f"тело мухи №{f.source} разложилось — стало едой")
+            eaten = f.amount <= 0.5
+            if eaten or f.decay(t) >= 1:
+                self.food.remove(f)
+                self._version += 1
+                if f.kind == "fruit":
+                    self._event(t, "fruit_gone", f.x, f.y, "яблоко съедено" if eaten else "яблоко сгнило и исчезло")
+                elif f.kind == "dropping":
+                    self._event(t, "food_gone", f.x, f.y, "помёт съеден" if eaten else "помёт высох")
+                else:
+                    self._event(t, "food_gone", f.x, f.y, "останки съедены" if eaten else "останки истлели")
+
+    def _webs(self, t, dt):
+        cfg = self.cfg
+        for w in list(self.webs):
+            if w.done_at is not None:
+                w.strength -= dt / cfg.web_life
+            if w.strength <= 0:
+                self.webs.remove(w)
+                self._event(t, "web_gone", w.x, w.y, "старая паутина разрушилась")
 
     def _spider(self, t, dt, flies):
-        s = self.spider
+        s, cfg = self.spider, self.cfg
         ids = flies["ids"]
-        if s.target is not None and s.target not in ids:
-            s.target = None
+        s.energy = max(0.0, s.energy - dt / cfg.spider_hunger_s)
+        starving = s.energy < cfg.starving
+        if starving and not s.starving:
+            self._event(t, "spider_starving", s.x, s.y, "паук ослаб от голода — медлит и отдыхает")
+        s.starving = starving
+        speed = s.speed * (0.5 if starving else 1.0)
+        if s.target is not None and (s.target not in ids or not flies["stuck"][ids.index(s.target)]):
+            s.target = None                         # eaten by someone else, or it tore free
         if s.target is None:
-            stuck = [fid for fid, st in zip(ids, flies["stuck"]) if st]
-            if stuck:
-                s.target = stuck[0]
+            stuck = np.flatnonzero(np.asarray(flies["stuck"]) > 0)
+            if len(stuck):
+                d = np.hypot(np.asarray(flies["x"])[stuck] - s.x, np.asarray(flies["y"])[stuck] - s.y)
+                s.target = ids[int(stuck[np.argmin(d)])]
+                if s.state == "build":
+                    self._finish_build(t, interrupted=True)
+                s.state = "wait"
         if s.target is not None:
             i = ids.index(s.target)
-            if not flies["stuck"][i]:          # it tore free
-                s.target = None
+            self._spider_walk(flies["x"][i], flies["y"][i], speed, dt)
+            return
+        if s.state == "rest":
+            s.timer -= dt
+            if s.timer <= 0:
+                s.state = "wait"
+            return
+        if s.state == "travel":
+            if self._spider_walk(*s.site, speed, dt) < 1.0:
+                w = Web(self.next_web_id, s.site[0], s.site[1], float(self.rng.uniform(*cfg.web_radius)), t)
+                self.next_web_id += 1
+                self.webs.append(w)
+                s.web, s.state, s.timer = w.id, "build", 0.0
+                self._event(t, "web_start", w.x, w.y, "паук начал плести паутину")
+            return
+        if s.state == "build":
+            w = self.web(s.web)
+            if w is None:
+                s.state = "wait"
                 return
-            tx, ty = flies["x"][i], flies["y"][i]
-        else:
-            tx, ty = s.home_x, s.home_y
-        d = np.hypot(tx - s.x, ty - s.y)
+            w.build = min(1.0, w.build + dt / cfg.web_build_time * (0.5 if starving else 1.0))
+            s.timer += dt * 2.2                      # circling the hub, spiral outwards
+            rr = w.r * max(w.build, 0.1)
+            nx, ny = w.x + rr * np.cos(s.timer), w.y + rr * np.sin(s.timer)
+            s.heading = float(np.arctan2(ny - s.y, nx - s.x))
+            s.x, s.y = float(nx), float(ny)
+            if w.build >= 1.0:
+                self._finish_build(t)
+            return
+        # wait at the hub of the newest web; hungry spiders build more webs
+        home = max(self.webs, key=lambda w: w.started) if self.webs else None
+        if home is not None:
+            self._spider_walk(home.x, home.y, speed, dt)
+        if starving and self.rng.random() < dt / 30.0:
+            s.state, s.timer = "rest", float(self.rng.uniform(15, 30))
+            return
+        if s.energy < cfg.spider_hungry and len(self.webs) < cfg.max_webs and t - s.last_build > cfg.web_cooldown:
+            site = self._web_site()
+            s.last_build = t
+            if site is not None:
+                s.site, s.state = site, "travel"
+
+    def _finish_build(self, t, interrupted=False):
+        s = self.spider
+        w = self.web(s.web)
+        s.web, s.state = None, "wait"
+        if w is None:
+            return
+        if interrupted and w.build < 0.3:
+            self.webs.remove(w)
+            return
+        if interrupted:
+            w.r *= w.build
+        w.build, w.done_at = 1.0, t
+        self.counters["webs_built"] += 1
+        self._event(t, "web_done", w.x, w.y, "паутина готова" if not interrupted else "паук бросил недоплетённую паутину")
+
+    def _spider_walk(self, tx, ty, speed, dt) -> float:
+        s = self.spider
+        d = float(np.hypot(tx - s.x, ty - s.y))
         if d > 0.5:
-            s.heading = float(np.arctan2(ty - s.y, tx - s.x))
-            step = min(d, s.speed * dt)
-            s.x += step * np.cos(s.heading)
-            s.y += step * np.sin(s.heading)
+            want = np.arctan2(ty - s.y, tx - s.x)
+            # webs are the spider's own ground: it may cross them; water and stones it walks around
+            nx, ny, h, det = self.steer(s.x, s.y, want, min(speed, d / dt), dt, s.detour, pad=0.5)
+            s.x, s.y, s.heading, s.detour = float(nx[0]), float(ny[0]), float(h[0]), float(det[0])
+        return d
 
     def _centipede(self, t, dt, flies):
         c, cfg = self.centipede, self.cfg
         ids, fx, fy = flies["ids"], flies["x"], flies["y"]
+        c.energy = max(0.0, c.energy - dt / cfg.centipede_hunger_s)
+        starving = c.energy < cfg.starving
+        if starving and not c.starving:
+            self._event(t, "centipede_starving", c.x, c.y, "сороконожка ослабла от голода — медлит и отдыхает")
+        c.starving = starving
+        hungry = c.energy < cfg.centipede_hungry
         if c.target is not None and c.target not in ids:
             c.target = None
         if c.target is not None:
             i = ids.index(c.target)
             if flies["airborne"][i] or np.hypot(fx[i] - c.x, fy[i] - c.y) > c.see_range * 1.3:
-                self.log.append({"t": round(t, 2), "kind": "centipede_lost", "x": round(c.x), "y": round(c.y),
-                                 "text": f"сороконожка упустила №{c.target}"})
+                self._event(t, "centipede_lost", c.x, c.y, f"сороконожка упустила №{c.target}")
                 c.target = None
-        if c.target is None and len(ids):
+        if c.rest > 0:
+            c.rest -= dt
+            c.body.insert(0, (round(c.x, 1), round(c.y, 1)))
+            del c.body[360:]
+            return
+        if starving and c.target is None and self.rng.random() < dt / 25.0:
+            c.rest = float(self.rng.uniform(10, 20))
+            return
+        if c.target is None and len(ids) and hungry:
             dx, dy = np.asarray(fx) - c.x, np.asarray(fy) - c.y
             dist = np.hypot(dx, dy)
             rel = np.abs(np.angle(np.exp(1j * (np.arctan2(dy, dx) - c.heading))))
@@ -270,15 +637,15 @@ class Arena:
             if seen.any():
                 j = int(np.argmin(np.where(seen, dist, np.inf)))
                 c.target = ids[j]
-                self.log.append({"t": round(t, 2), "kind": "centipede_hunt", "x": round(c.x), "y": round(c.y),
-                                 "text": f"сороконожка заметила №{c.target}"})
+                self._event(t, "centipede_hunt", c.x, c.y, f"сороконожка заметила №{c.target}")
+        slow = 0.5 if starving else 1.0
         if c.target is not None:
             i = ids.index(c.target)
             want = np.arctan2(fy[i] - c.y, fx[i] - c.x)
-            speed = c.hunt_speed
+            speed = c.hunt_speed * slow
         else:
             want = c.heading + self.rng.normal(0, 1.2) * np.sqrt(dt)
-            speed = c.wander_speed
+            speed = c.wander_speed * slow * (1.0 if hungry else 0.6)     # a fed centipede ambles
         turn = np.angle(np.exp(1j * (want - c.heading)))
         c.heading += float(np.clip(turn, -2.5 * dt, 2.5 * dt))
         nx, ny = c.x + speed * np.cos(c.heading) * dt, c.y + speed * np.sin(c.heading) * dt
@@ -288,6 +655,84 @@ class Arena:
             c.x, c.y = float(nx), float(ny)
         c.body.insert(0, (round(c.x, 1), round(c.y, 1)))
         del c.body[360:]
+
+    def _ants(self, t, dt):
+        A, cfg = self.ants, self.cfg
+        n = len(A["x"])
+        if not n:
+            return
+        fa = self.food_arrays(t)
+        fid = np.array([f.id for f in self.food], dtype=int)
+        by_id = {f.id: k for k, f in enumerate(self.food)}
+        st = A["state"]
+        # rare transitions in a small loop (a handful of ants)
+        for a in range(n):
+            s = st[a]
+            if s == ANT_NEST:
+                A["timer"][a] -= dt
+                if A["timer"][a] <= 0:
+                    k = by_id.get(self.nest_known)
+                    if k is not None and fa["edible"][k]:
+                        st[a], A["target"][a] = ANT_TO_FOOD, self.nest_known
+                    else:
+                        self.nest_known = -1
+                        st[a], A["timer"][a] = ANT_SEARCH, cfg.ant_search
+                        A["h"][a] = self.rng.uniform(-np.pi, np.pi)
+            elif s == ANT_SEARCH:
+                A["timer"][a] -= dt
+                if len(fid):
+                    d = np.hypot(fa["x"] - A["x"][a], fa["y"] - A["y"][a])
+                    d = np.where(fa["edible"], d, np.inf)
+                    k = int(np.argmin(d))
+                    if d[k] < cfg.ant_sense:
+                        st[a], A["target"][a] = ANT_TO_FOOD, fid[k]
+                        continue
+                if A["timer"][a] <= 0:
+                    st[a] = ANT_HOME
+            elif s in (ANT_TO_FOOD, ANT_EAT):
+                k = by_id.get(int(A["target"][a]))
+                if k is None or not fa["edible"][k]:
+                    st[a], A["target"][a] = (ANT_HOME if A["carry"][a] > 0 else ANT_SEARCH), -1
+                    A["timer"][a] = cfg.ant_search / 2
+                    continue
+                f = self.food[k]
+                if s == ANT_TO_FOOD:
+                    if np.hypot(f.x - A["x"][a], f.y - A["y"][a]) < fa["r"][k] + 1.0:
+                        st[a] = ANT_EAT
+                        if not f.ant_seen:
+                            f.ant_seen = True
+                            self._event(t, "ant_food", f.x, f.y, "муравьи нашли еду")
+                else:
+                    bite = min(cfg.ant_eat_rate * dt, f.amount)
+                    f.amount -= bite
+                    A["carry"][a] += bite
+                    self.counters["food_by_ants"] += bite
+                    if A["carry"][a] >= cfg.ant_bite or f.amount <= 0.5:
+                        st[a] = ANT_HOME
+                        self.nest_known = f.id if f.amount > cfg.ant_bite else -1
+            elif s == ANT_HOME:
+                if np.hypot(self.nest[0] - A["x"][a], self.nest[1] - A["y"][a]) < 3.0:
+                    st[a], A["timer"][a] = ANT_NEST, cfg.ant_nest_rest
+                    if A["carry"][a] > 0:
+                        self.counters["ant_trips"] += 1
+                    self.nest_food += A["carry"][a]
+                    A["carry"][a] = 0.0
+                    A["x"][a], A["y"][a] = self.nest
+        # vectorised walking
+        move = (st == ANT_SEARCH) | (st == ANT_TO_FOOD) | (st == ANT_HOME)
+        if not move.any():
+            return
+        want = A["h"] + self.rng.normal(0, 1.5, n) * np.sqrt(dt)
+        tgt = st == ANT_TO_FOOD
+        if tgt.any():
+            k = np.array([by_id.get(int(g), 0) for g in A["target"][tgt]])
+            want[tgt] = np.arctan2(fa["y"][k] - A["y"][tgt], fa["x"][k] - A["x"][tgt])
+        home = st == ANT_HOME
+        want[home] = np.arctan2(self.nest[1] - A["y"][home], self.nest[0] - A["x"][home]) + self.rng.normal(0, 0.3, home.sum())
+        speed = np.where(A["carry"] > 0, cfg.ant_carry_speed, cfg.ant_speed)
+        m = np.flatnonzero(move)
+        nx, ny, h, det = self.steer(A["x"][m], A["y"][m], want[m], speed[m], dt, A["detour"][m], pad=0.5)
+        A["x"][m], A["y"][m], A["h"][m], A["detour"][m] = nx, ny, h, det
 
     def apply_commands(self, path, t: float, done: int) -> int:
         """Apply viewer commands appended to a JSONL file; returns lines processed."""
@@ -309,19 +754,32 @@ class Arena:
         return len(lines)
 
     def snapshot(self, t: float) -> dict:
-        s, c = self.spider, self.centipede
+        s, c, A = self.spider, self.centipede, self.ants
         return {
             "t": round(t, 3), "light": round(self.light(t), 3), "wind": [round(float(v), 2) for v in self.wind],
-            "fruits": [[f.id, round(f.x, 1), round(f.y, 1), round(f.sugar), round(f.freshness(t), 2), int(f.by_viewer)]
-                       for f in self.fruits],
+            # fruits: [id, x, y, amount, freshness, by_viewer, amount_whole]
+            "fruits": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount), round(f.freshness(t), 2), int(f.by_viewer),
+                        round(f.amount0)] for f in self.food if f.kind == "fruit"],
+            # food: droppings and bodies [id, kind, x, y, amount, amount_whole, ready 0..1, decay 0..1, source fly]
+            "food": [[f.id, f.kind, round(f.x, 1), round(f.y, 1), round(f.amount, 1), round(f.amount0),
+                      round(float(np.clip(1 - (f.ready_at - t) / self.cfg.corpse_delay, 0, 1)), 2), round(f.decay(t), 2),
+                      f.source] for f in self.food if f.kind != "fruit"],
             "shadows": [[sh.target, round((t - sh.t_start) / sh.duration, 3), round(sh.direction, 2)] for sh in self.shadows],
-            "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1],
+            # webs: [id, x, y, radius, strength, build]
+            "webs": [[w.id, round(w.x, 1), round(w.y, 1), round(w.radius(), 1), round(w.strength, 2), round(w.build, 2)]
+                     for w in self.webs],
+            "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1,
+                       s.state, round(s.energy, 2)],
             "centipede": [round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
-                          c.body[::12]],
+                          c.body[::12], round(c.energy, 2), int(c.rest > 0)],
+            # ants: [x, y, heading, state, carrying]
+            "ants": [[round(float(A["x"][a]), 1), round(float(A["y"][a]), 1), round(float(A["h"][a]), 2), int(A["state"][a]),
+                      int(A["carry"][a] > 0)] for a in range(len(A["x"]))],
+            "nest_food": round(self.nest_food),
         }
 
     def static(self) -> dict:
         return {"width": self.cfg.width, "height": self.cfg.height, "odor_sigma": self.cfg.odor_sigma,
-                "day_length": self.cfg.day_length,
+                "day_length": self.cfg.day_length, "odor_ref": self.cfg.odor_ref,
                 "obstacles": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.obstacles],
-                "web": [self.spider.home_x, self.spider.home_y, self.spider.web_r]}
+                "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "max_webs": self.cfg.max_webs}

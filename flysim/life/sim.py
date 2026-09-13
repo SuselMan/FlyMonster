@@ -15,7 +15,12 @@ What is connectome and what is ours (see README):
   on context. Walking itself is an innate generator (leg circuits are in the
   ventral nerve cord, absent from FAFB).
 - Web: sticky. Takeoff attempts of the brain add escape force; enough force
-  tears the fly free, otherwise the spider arrives. No dice roll.
+  tears the fly free (an old, weakened web needs less, and tearing damages
+  it), otherwise the spider arrives. No dice roll.
+- Food is finite: flies (and ants) eat it away. Vision sees flies, food,
+  stones, the predators and ants as objects; there is no food-seeking rule.
+- Flight metrics (long flights, flying across water) are only counted, they
+  do not change how flights are triggered.
 - Hunger lowers the threshold of NPF neurons and raises sugar sensitivity.
 - Reproduction is clonal; a mature egg is laid while the fly feeds.
 - Mushroom-body learning is not included (scripts/mb_causal_scan.py).
@@ -42,6 +47,7 @@ READOUT = {               # name -> (cell_type, side or None)
     "MDN": ("MDN", None), "GF": ("DNp01", None), "MN9": (None, None),
     "DNp02": ("DNp02", None), "DNp04": ("DNp04", None), "DNp11": ("DNp11", None), "DNp09": ("DNp09", None),
 }
+LONG_FLIGHT_MM = 80.0     # a long-mode flight that covered at least this much ground
 GENES = ("vision", "smell", "taste", "looming", "hunger", "walk")
 SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar")
 
@@ -117,9 +123,12 @@ class Life:
         self.events: list = []
         self.dead: list = []
         self.births = 0
+        # stuck: id+1 of the web a fly is stuck on (0 = free)
+        self.counters = {"hops": 0, "flights": 0, "long_flights": 0, "water_crossings": 0, "eaten": 0.0}
         self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "air_left", "air_total", "air_speed",
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
-                         "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses")
+                         "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
+                         "air_x0", "air_y0", "air_water", "air_long")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -218,6 +227,23 @@ class Life:
         rates[len(self.sense_idx):, slots] *= g[:, GENES.index("smell")]
         bias = torch.zeros(self.cfg.max_flies, device=self.dev)
         bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)             * g[:, GENES.index("hunger")]
+        hz = self._brain_hz(rates, bias, slots)
+        a = WORLD_DT / READ_TAU
+        for r, k in enumerate(READOUT):
+            self.read[k] += (hz[r] - self.read[k]) * a
+        self._body(light)
+        self._hatch()
+        self.arena.update(self.t, WORLD_DT, {"ids": self.ids, "x": self.x, "y": self.y,
+                                             "stuck": self.stuck.astype(int), "airborne": self.air_left > 0,
+                                             "moving": self.state == 0})
+        self._predators()
+        for e in self.arena.log:
+            self.events.append({**e, "fly": -1})
+        self.arena.log.clear()
+        self.t += WORLD_DT
+
+    def _brain_hz(self, rates, bias, slots) -> np.ndarray:
+        """Run 10 ms of all brains; returns (readouts, flies) descending-neuron rates in Hz."""
         if isinstance(self.brain, FastBrain):
             # CPU and GPU overlap: the body uses the block that finished while the
             # CPU was preparing this step (one extra 10 ms of sensorimotor delay).
@@ -242,30 +268,18 @@ class Life:
             counts = counts[:, slots]
         hz = ((self.read_mix @ counts) / WORLD_DT).cpu().numpy()
         self._check_overflow()
-        a = WORLD_DT / READ_TAU
-        for r, k in enumerate(READOUT):
-            self.read[k] += (hz[r] - self.read[k]) * a
-        self._body(light)
-        self._hatch()
-        self.arena.update(self.t, WORLD_DT, {"ids": self.ids, "x": self.x, "y": self.y,
-                                             "stuck": self.stuck.astype(bool), "airborne": self.air_left > 0,
-                                             "moving": self.state == 0})
-        self._predators()
-        for e in self.arena.log:
-            self.events.append({**e, "fly": -1})
-        self.arena.log.clear()
-        self.t += WORLD_DT
+        return hz
 
     def _sensory_rates(self, light: float) -> torch.Tensor:
         cfg, ar, B = self.cfg, self.arena, len(self.ids)
         drive = np.zeros((len(self.group_names), B), dtype=np.float32)
         gi = {n: i for i, n in enumerate(self.group_names)}
-        s, c = ar.spider, ar.centipede
-        # vision: flies, fruits, stones, spider, centipede as objects in each hemifield
+        s, c, fa, ants = ar.spider, ar.centipede, ar.food_arrays(self.t), ar.ants
+        # vision: flies, food, stones, spider, centipede, ants as objects in each hemifield
         stones = [o for o in ar.obstacles if o.kind == "stone"]
-        ox = np.concatenate([self.x, [f.x for f in ar.fruits], [o.x for o in stones], [s.x, c.x]])
-        oy = np.concatenate([self.y, [f.y for f in ar.fruits], [o.y for o in stones], [s.y, c.y]])
-        osize = np.concatenate([np.full(B, 1.5), [f.radius for f in ar.fruits], [o.rx for o in stones], [4.0, 10.0]])
+        ox = np.concatenate([self.x, fa["x"], [o.x for o in stones], [s.x, c.x], ants["x"]])
+        oy = np.concatenate([self.y, fa["y"], [o.y for o in stones], [s.y, c.y], ants["y"]])
+        osize = np.concatenate([np.full(B, 1.5), fa["r"], [o.rx for o in stones], [4.0, 10.0], np.full(len(ants["x"]), 1.0)])
         dx, dy = ox[None] - self.x[:, None], oy[None] - self.y[:, None]
         dist = np.hypot(dx, dy) + 1e-6
         az = np.angle(np.exp(1j * (np.arctan2(dy, dx) - self.heading[:, None])))
@@ -295,11 +309,10 @@ class Life:
                 loom[0] = np.where(close, np.maximum(loom[0], strength * np.where(rel > -0.3, 1.0, 0.3)), loom[0])
                 loom[1] = np.where(close, np.maximum(loom[1], strength * np.where(rel < 0.3, 1.0, 0.3)), loom[1])
         drive[gi["loom_L"]], drive[gi["loom_R"]] = loom[0], loom[1]
-        # taste on contact with fruit, stronger when hungry
-        sugar = np.zeros(B)
-        for f in ar.fruits:
-            on = np.hypot(self.x - f.x, self.y - f.y) < f.radius
-            sugar[on] = np.maximum(sugar[on], 150 * (0.5 + np.clip(1 - self.energy[on], 0, 1)) * f.strength())
+        # taste on contact with food, stronger when hungry
+        on = self._touching_food(fa)
+        best = np.where(on, fa["taste"][None], 0).max(1) if len(fa["x"]) else np.zeros(B)
+        sugar = 150 * (0.5 + np.clip(1 - self.energy, 0, 1)) * best
         drive[gi["sugar"]] = sugar
         # touch: head bristles pressing against a wall, stone or water edge
         drive[gi["touch_L"], (self.touch_left > 0) & (self.state != 3)] = 100
@@ -311,6 +324,13 @@ class Life:
         self.senses[:, 6] = self.touch_left != 0
         self.senses[:, 7] = sugar / 150
         return torch.from_numpy(drive).to(self.dev)[self.sense_col]
+
+    def _touching_food(self, fa) -> np.ndarray:
+        """(flies, food) contact: the fly's head is over an edible item."""
+        if not len(fa["x"]):
+            return np.zeros((len(self.ids), 0), dtype=bool)
+        d = np.hypot(self.x[:, None] - fa["x"][None], self.y[:, None] - fa["y"][None])
+        return (d < fa["r"][None] + 0.5) & fa["edible"][None]
 
     def _olfaction(self) -> torch.Tensor:
         B, ar = len(self.ids), self.arena
@@ -343,9 +363,8 @@ class Life:
         self.turn_base += (diff - self.turn_base) * (dt / cfg.turn_adapt)
         turn = cfg.turn_gain * (diff - self.turn_base)
         airborne = self.air_left > 0
-        on_fruit = np.zeros(B, dtype=bool)
-        for f in ar.fruits:
-            on_fruit |= np.hypot(self.x - f.x, self.y - f.y) < f.radius
+        fa = ar.food_arrays(self.t)
+        on_fruit = self._touching_food(fa).any(1)
         stuck = self.stuck > 0
         feeding = on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck
         backward = (r["MDN"] > cfg.mdn_threshold) & ~airborne & ~stuck
@@ -360,7 +379,10 @@ class Life:
         for i in np.flatnonzero(stuck & (hop | fly_long)):
             self.escape_force[i] += 0.6 if hop[i] else 0.35
             self.cooldown[i] = 0.4
-            if self.escape_force[i] >= cfg.web_escape:
+            web = ar.web(int(self.stuck[i]) - 1)
+            need = cfg.web_escape * (0.4 + 0.6 * (web.strength if web else 0))    # old webs hold less
+            if self.escape_force[i] >= need:
+                ar.tear_web(int(self.stuck[i]) - 1, self.t)
                 self.stuck[i] = 0
                 self._event(i, "web_free", "вырвалась из паутины")
             else:
@@ -378,6 +400,8 @@ class Life:
             if hop[i]:
                 self.heading[i] += self.rng.uniform(-1.0, 1.0)
             self.energy[i] -= cfg.jump_cost if hop[i] else cfg.flight_cost
+            self.air_x0[i], self.air_y0[i], self.air_water[i], self.air_long[i] = self.x[i], self.y[i], 0, 0 if hop[i] else 1
+            self.counters["hops" if hop[i] else "flights"] += 1
             self._event(i, "hop" if hop[i] else "flight",
                         "прыжок (гигантское волокно)" if hop[i] else "взлетела (DNp02/04/11, долгий перелёт)")
         airborne = self.air_left > 0
@@ -418,25 +442,41 @@ class Life:
         self.x, self.y = np.clip(nx, 1, W - 1), np.clip(ny, 1, H - 1)
 
         # landing: never on water or a stone — the flight continues until clear ground
+        if airborne.any():
+            self.air_water[airborne] = np.maximum(self.air_water[airborne], ar.in_water(self.x[airborne], self.y[airborne]))
         landing = airborne & (self.air_left - dt <= 0)
         extend = landing & ar.blocked(self.x, self.y, pad=1)
         self.air_left = np.where(extend, 0.1, np.maximum(self.air_left - dt, 0))
         self.air_total = np.where(extend, self.air_total + 0.1, self.air_total)
         airborne = self.air_left > 0
+        self._landing_metrics(landing & ~extend)
 
-        # entering the web
-        caught = ~airborne & (self.stuck == 0) & ar.in_web(self.x, self.y) & (self.t - self.jumped_at > 3.0)
+        # webs that decayed away release their flies; entering a web
+        if (self.stuck > 0).any():
+            alive = np.isin(self.stuck - 1, [w.id for w in ar.webs])
+            for i in np.flatnonzero((self.stuck > 0) & ~alive):
+                self.stuck[i] = 0
+                self._event(i, "web_released", "паутина истлела — муха свободна")
+        web_at = ar.in_web(self.x, self.y)
+        caught = ~airborne & (self.stuck == 0) & (web_at > 0) & (self.t - self.jumped_at > 3.0)
         for i in np.flatnonzero(caught):
-            self.stuck[i] = 1
+            self.stuck[i] = web_at[i]
             self.escape_force[i] = 0
             self._event(i, "web_stuck", "прилипла к паутине")
 
-        for f in ar.fruits:
-            here = feeding & (np.hypot(self.x - f.x, self.y - f.y) < f.radius)
-            if here.any() and f.sugar > 0:
-                eat = min(f.sugar, cfg.sugar_per_s * dt * here.sum())
-                f.sugar -= eat
-                self.energy[here] += eat / here.sum() * cfg.energy_per_sugar
+        # eating: each feeding fly eats from the nearest item it touches; items are finite
+        if feeding.any() and len(fa["x"]):
+            touch = self._touching_food(fa)
+            d = np.where(touch, np.hypot(self.x[:, None] - fa["x"][None], self.y[:, None] - fa["y"][None]), np.inf)
+            which = np.argmin(d, 1)
+            eaters = np.flatnonzero(feeding & touch.any(1))
+            want = np.bincount(which[eaters], minlength=len(ar.food)) * cfg.sugar_per_s * dt
+            got = np.minimum(want, np.maximum(fa["amount"], 0))
+            share = np.divide(got, want, out=np.zeros_like(got), where=want > 0)
+            for k in np.flatnonzero(got > 0):
+                ar.food[k].amount -= got[k]
+            self.energy[eaters] += cfg.sugar_per_s * dt * share[which[eaters]] * cfg.energy_per_sugar
+            self.counters["eaten"] += float(got.sum())
         for i in np.flatnonzero(feeding & (self.t - self.last_feed > 3.0)):
             self._event(i, "feed", "ест (MN9 → хоботок)")
         self.last_feed[feeding] = self.t
@@ -468,6 +508,18 @@ class Life:
             self._kill(i, "old", "умерла от старости")
         self._remove_dead()
 
+    def _landing_metrics(self, landed):
+        for i in np.flatnonzero(landed):
+            dist = float(np.hypot(self.x[i] - self.air_x0[i], self.y[i] - self.air_y0[i]))
+            if self.air_long[i] and dist >= LONG_FLIGHT_MM:
+                self.counters["long_flights"] += 1
+                self._event(i, "long_flight", f"долгий перелёт: {dist:.0f} мм")
+            if self.air_water[i] and not self.arena.in_water(self.air_x0[i], self.air_y0[i]) \
+                    and not self.arena.in_water(self.x[i], self.y[i]):
+                self.counters["water_crossings"] += 1
+                self._event(i, "water_crossed", f"перелетела через воду ({dist:.0f} мм)")
+            self.air_water[i] = 0
+
     def _predators(self):
         ar = self.arena
         s, c = ar.spider, ar.centipede
@@ -475,11 +527,13 @@ class Life:
             i = self.ids.index(s.target)
             if self.stuck[i] and np.hypot(self.x[i] - s.x, self.y[i] - s.y) < 2.5:
                 self._kill(i, "spider", "съедена пауком")
+                ar.predator_ate("spider", self.t)
                 s.target = None
         if c.target is not None and c.target in self.ids:
             i = self.ids.index(c.target)
             if self.air_left[i] <= 0 and np.hypot(self.x[i] - c.x, self.y[i] - c.y) < 3.5:
                 self._kill(i, "centipede", "поймана сороконожкой")
+                ar.predator_ate("centipede", self.t)
                 c.target = None
         self._remove_dead()
 
@@ -492,6 +546,7 @@ class Life:
         if self.ids[i] not in {d for d, _ in self.dead}:
             self._event(i, "death_" + kind, text)
             self.dead.append((self.ids[i], kind))
+            self.arena.fly_died(self.t, self.ids[i], kind, float(self.x[i]), float(self.y[i]))
 
     def _remove_dead(self):
         gone = {d for d, _ in self.dead}
@@ -537,6 +592,8 @@ class Life:
         alt = np.where(self.air_left > 0, alt * self.air_height, 0)
         return {
             **self.arena.snapshot(self.t),
+            "counters": {**self.counters, "eaten": round(self.counters["eaten"]),
+                         **{k: round(v) for k, v in self.arena.counters.items()}},
             "eggs": [[round(e.x, 1), round(e.y, 1), round((self.t - e.laid) / self.cfg.hatch_time, 2), e.parent]
                      for e in self.eggs],
             "flies": [[fid, round(float(self.x[i]), 1), round(float(self.y[i]), 1), round(float(self.heading[i]), 2),

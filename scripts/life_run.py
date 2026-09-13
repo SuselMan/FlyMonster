@@ -3,6 +3,8 @@
 Writes results/life_<run>/: meta.json, chunks/chunk_XXXXX.json (10 s each,
 frames every 50 ms), events.jsonl, status.json. Reads commands.jsonl
 (appended by the viewer, e.g. dropping fruit) once per simulated second.
+status.json carries world counters (flights, long flights, water crossings,
+droppings, webs built, ant trips, ...).
 Usage: python scripts/life_run.py --run first [--flies 24] [--minutes 60]
 """
 import argparse
@@ -69,9 +71,9 @@ def main():
             (out / "status.json").write_text(json.dumps({
                 "chunks": chunk + 1, "sim_s": round(life.t, 1), "wall_s": round(wall, 1),
                 "speed": round(life.t / wall, 3), "alive": len(life.ids), "eggs": len(life.eggs),
-                "births": life.births, "time": time.time()}))
+                "births": life.births, "counters": life.frame()["counters"], "time": time.time()}))
             print(f"t={life.t:7.1f}s  wall {wall:7.1f}s  speed {life.t / wall:.2f}x  alive {len(life.ids)}  "
-                  f"events {n_events}")
+                  f"events {n_events}  {life.frame()['counters']}")
             frames, chunk = [], chunk + 1
         if not life.ids:
             print("all flies died")
