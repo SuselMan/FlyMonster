@@ -61,6 +61,11 @@ connectome and the published LIF model. Around it:
   with MDN, takes off with the giant fiber DNp01, feeds with MN9. The body
   adapts to a sustained left-right DNa difference (the single DNa neurons of
   this connectome carry a static left bias).
+- **Wind and compass**: wind on the antennae drives Johnston's organ wind neurons (JO-C push, JO-E pull; our
+  transducer). Head direction is injected as a bump on the E-PG ring; FlyWire has no E-PG wedge labels,
+  so the ring order is recovered from the connectome (spectral embedding of partner profiles gives a
+  circle). Scan (`scripts/wind_scan.py`): several DN pairs encode wind side, but DNa01/DNa02 do not
+  follow it and odor does not gate it.
 - **Hunger** lowers the threshold of NPF neurons and raises sugar sensitivity.
 - **One female fly's wiring**: every fly has the same connectome.
 - **The world is scripted** (`life/arena.py`), the flies are not: nothing in

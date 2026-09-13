@@ -38,7 +38,7 @@ from ..body import dn_reach
 from ..brain import FlyBrain
 from ..fastbrain import FastBrain
 from ..physiology import DEFAULT, Physiology, apply, neuron_meta
-from ..senses import Olfaction
+from ..senses import Compass, Olfaction, Wind
 from .arena import Arena, ArenaConfig
 
 WORLD_DT = 0.010          # s
@@ -110,7 +110,9 @@ class Life:
         self.steps_per_world = round(WORLD_DT * 1000 / params.dt)
         self._wire()
         self.olf = Olfaction(self.meta, cfg.max_flies, self.dev)
-        self.input_idx = torch.cat([self.sense_idx, self.olf.input_idx])
+        self.wind_sense = Wind(self.meta, self.dev)
+        self.compass = Compass(self.con, self.meta, self.dev)
+        self.input_idx = torch.cat([self.sense_idx, self.olf.input_idx, self.wind_sense.input_idx, self.compass.input_idx])
         if self.dev.type == "cuda" and params.std_u == 0:
             self.brain = FastBrain(model, cfg.max_flies, params, self.input_idx, self.read_idx, self.npf_idx,
                                    steps=self.steps_per_world, max_spikes=64 * cfg.max_flies, max_events=11_000 * cfg.max_flies)
@@ -246,8 +248,10 @@ class Life:
         g = torch.tensor(self.genome, dtype=torch.float32, device=self.dev)
         rates = torch.zeros(len(self.input_idx), self.cfg.max_flies, device=self.dev)
         rates[:len(self.sense_idx), slots] = self._sensory_rates(light)
-        rates[len(self.sense_idx):] = self._olfaction()
-        rates[len(self.sense_idx):, slots] *= g[:, GENES.index("smell")]
+        n_s, n_o = len(self.sense_idx), len(self.olf.input_idx)
+        rates[n_s:n_s + n_o] = self._olfaction()
+        rates[n_s:n_s + n_o, slots] *= g[:, GENES.index("smell")]
+        rates[n_s + n_o:, slots] = self._wind_and_compass()
         bias = torch.zeros(self.cfg.max_flies, device=self.dev)
         bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)             * g[:, GENES.index("hunger")]
         hz = self._brain_hz(rates, bias, slots)
@@ -356,6 +360,16 @@ class Life:
             return np.zeros((len(self.ids), 0), dtype=bool)
         d = np.hypot(self.x[:, None] - fa["x"][None], self.y[:, None] - fa["y"][None])
         return (d < fa["r"][None] + 0.5) & fa["edible"][None]
+
+    def _wind_and_compass(self) -> torch.Tensor:
+        # wind on the antennae (Johnston's organ) and head direction on the E-PG ring; no wind sense in the air
+        wx, wy = (float(v) for v in self.arena.wind)
+        rel = np.angle(np.exp(1j * (np.arctan2(-wy, -wx) - self.heading)))          # where the wind comes from, + = left
+        speed = np.where(self.air_left > 0, 0.0, np.hypot(wx, wy))
+        wind = self.wind_sense.rates(torch.tensor(speed, dtype=torch.float32, device=self.dev),
+                                     torch.tensor(rel, dtype=torch.float32, device=self.dev))
+        heading = self.compass.rates(torch.tensor(self.heading, dtype=torch.float32, device=self.dev))
+        return torch.cat([wind, heading])
 
     def _olfaction(self) -> torch.Tensor:
         B, ar = len(self.ids), self.arena
