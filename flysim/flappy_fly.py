@@ -79,10 +79,10 @@ class FlappyFly:
 
     @torch.no_grad()
     def play(self, seeds: list[int], params: list[FlyParams], cfg: FlappyConfig | None = None,
-             record: bool = False):
+             record: bool = False, n_pipes: int = 64):
         """One game per (seed, params) pair. Returns Games and, if record, per-game traces."""
         B = len(seeds)
-        games = Games(seeds, cfg)
+        games = Games(seeds, cfg, n_pipes=n_pipes)
         if self.brain is None:
             self.brain = FlyBrain(self.con, batch=B, params=self.params, device=self.device)
         else:

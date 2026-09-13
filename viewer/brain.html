@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мозг мухи</title>
+<style>
+  :root { --bg:#07090d; --panel:#12151c; --line:#232834; --text:#e6e8ee; --dim:#8a91a3; --accent:#f5b83d; --good:#4cc38a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; padding:14px 16px; }
+  header { display:flex; flex-wrap:wrap; gap:8px 20px; align-items:baseline; margin-bottom:12px; }
+  h1 { font-size:20px; margin:0; } h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:0 0 8px; font-weight:600; }
+  a { color:#5aa9f0; } .dim { color:var(--dim); }
+  .layout { display:grid; grid-template-columns:260px minmax(0,1fr) 300px; gap:12px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
+  .preset { display:block; width:100%; text-align:left; margin:0 0 6px; padding:8px 10px; border-radius:8px;
+            background:#171b24; color:var(--text); border:1px solid var(--line); cursor:pointer; font:inherit; }
+  .preset small { display:block; color:var(--dim); font-size:11px; }
+  .preset.on { border-color:var(--accent); background:#2a2415; }
+  button.go { width:100%; padding:10px; border-radius:8px; border:0; background:var(--accent); color:#1a1405; font-weight:700; font-size:15px; cursor:pointer; }
+  button.go:disabled { opacity:.5; cursor:wait; }
+  label.row { display:flex; justify-content:space-between; gap:8px; margin:10px 0 4px; font-size:13px; }
+  input[type=range] { width:100%; }
+  .controls { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px; }
+  .controls button, .controls select { background:#171b24; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 10px; font:inherit; }
+  #time { font-variant-numeric:tabular-nums; min-width:150px; }
+  .stim { color:var(--accent); font-weight:600; }
+  canvas { display:block; width:100%; }
+  #brain { background:#05070a; border-radius:8px; cursor:crosshair; }
+  #tip { position:fixed; pointer-events:none; background:#000c; border:1px solid var(--line); padding:4px 8px; border-radius:6px; font-size:12px; display:none; }
+  .out { margin:0 0 8px; } .out b { font-size:13px; } .out .what { color:var(--dim); font-size:12px; }
+  .out .bar { height:6px; background:#1d222c; border-radius:3px; margin-top:3px; overflow:hidden; }
+  .out .bar div { height:100%; background:var(--good); }
+  .out:hover { background:#171b24; border-radius:6px; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:var(--dim); margin-top:6px; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:-1px; }
+  .summary { font-size:13px; margin-bottom:10px; }
+  @media (max-width:1100px) { .layout { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Мозг мухи</h1>
+  <span class="dim">138 639 нейронов коннектома FlyWire. Выбери, что почувствует муха, и смотри, как волна идёт по мозгу.</span>
+  <a href="/viewer/flappy.html">Flappy Fly</a> <a href="/">лабиринт</a>
+</header>
+
+<div class="layout">
+  <section class="panel">
+    <h2>Что почувствует муха</h2>
+    <div id="presets" class="dim">загрузка мозга…</div>
+    <label class="row"><span>Сила стимула</span><b id="hzv">150 Гц</b></label>
+    <input type="range" id="hz" min="30" max="300" step="10" value="150">
+    <label class="row"><span>Сколько длится</span><b id="stimv">150 мс</b></label>
+    <input type="range" id="stim" min="20" max="400" step="10" value="150">
+    <label class="row"><span>Смотреть</span><b id="msv">300 мс</b></label>
+    <input type="range" id="ms" min="100" max="1000" step="50" value="300">
+    <p><button class="go" id="go" disabled>Запустить</button></p>
+    <p class="dim" style="font-size:12px">Можно выбрать несколько стимулов сразу. Симуляция идёт на видеокарте, 1–2 секунды.</p>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <button id="play">▶</button>
+      <button id="restart">⟲</button>
+      <select id="speed"><option value="0.02">×0.02</option><option value="0.05" selected>×0.05</option><option value="0.1">×0.1</option><option value="0.25">×0.25</option></select>
+      <span id="time" class="dim">—</span>
+    </div>
+    <canvas id="brain"></canvas>
+    <div class="legend" id="legend"></div>
+    <h2 style="margin-top:12px">Активность по типам нейронов</h2>
+    <canvas id="activity" height="120"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>Реакция мухи</h2>
+    <div class="summary" id="summary" style="color:var(--dim)">Запусти стимул.</div>
+    <div id="outputs"></div>
+  </section>
+</div>
+<div id="tip"></div>
+
+<script>
+const CLASS_COLORS = {
+  optic: "#3b5b8c", central: "#8a6fd1", sensory: "#e0a33a", visual_projection: "#4fa3d9", ascending: "#5fbf8f",
+  descending: "#ff6b6b", sensory_ascending: "#d9c36a", visual_centrifugal: "#6f8fb3", motor: "#ff3d7f",
+  endocrine: "#c9c9c9", unknown: "#555",
+};
+const CLASS_RU = {
+  optic: "зрительные доли", central: "центральный мозг", sensory: "сенсорные", visual_projection: "зрительные проекционные",
+  ascending: "восходящие", descending: "нисходящие", sensory_ascending: "сенсорные восходящие", visual_centrifugal: "зрительные центробежные",
+  motor: "моторные", endocrine: "эндокринные", unknown: "без разметки",
+};
+const $ = id => document.getElementById(id);
+let meta, X, Y, CLS, TYP, base = null, sim = null, frames = [], t = 0, playing = false, hover = null;
+const chosen = new Set(["sugar"]);
+
+async function init() {
+  meta = await (await fetch("/api/brain/meta")).json();
+  const buf = await (await fetch("/api/brain/layout.bin")).arrayBuffer();
+  const n = meta.n, pad = (4 - n % 4) % 4;
+  X = new Float32Array(buf, 0, n); Y = new Float32Array(buf, 4 * n, n);
+  CLS = new Uint8Array(buf, 8 * n, n); TYP = new Uint16Array(buf.slice(9 * n + pad, 9 * n + pad + 2 * n));
+  $("presets").className = "";
+  $("presets").innerHTML = meta.presets.map(p => `<button class="preset${chosen.has(p.id) ? " on" : ""}" data-id="${p.id}">${p.name}<small>${p.desc} · ${p.count}</small></button>`).join("");
+  document.querySelectorAll(".preset").forEach(b => b.onclick = () => { chosen.has(b.dataset.id) ? chosen.delete(b.dataset.id) : chosen.add(b.dataset.id); b.classList.toggle("on"); });
+  $("legend").innerHTML = meta.classes.filter(c => c !== "unknown").map(c => `<span><i style="background:${CLASS_COLORS[c] || "#777"}"></i>${CLASS_RU[c] || c}</span>`).join("");
+  buildGrid(); drawBase(); $("go").disabled = false; draw();
+}
+
+// ---------- base map ----------
+const cv = $("brain");
+function size() { const W = cv.clientWidth; return [W, Math.round(W * meta.aspect * 1.05)]; }
+function toPx(i, W, H) { return [8 + X[i] * (W - 16), 8 + Y[i] * (W - 16)]; }
+function drawBase() {
+  const [W, H] = size(), dpr = devicePixelRatio || 1;
+  base = document.createElement("canvas"); base.width = W * dpr; base.height = H * dpr;
+  const c = base.getContext("2d"); c.scale(dpr, dpr); c.globalAlpha = 0.22;
+  for (let i = 0; i < meta.n; i++) {
+    if (X[i] < 0) continue; const [x, y] = toPx(i, W, H);
+    c.fillStyle = CLASS_COLORS[meta.classes[CLS[i]]] || "#777"; c.fillRect(x, y, 1, 1);
+  }
+}
+let grid = null; const G = 120;
+function buildGrid() {
+  grid = Array.from({ length: G * G }, () => []);
+  for (let i = 0; i < meta.n; i++) { if (X[i] < 0) continue; grid[Math.min(G - 1, Math.floor(Y[i] * G)) * G + Math.min(G - 1, Math.floor(X[i] * G))].push(i); }
+}
+cv.onmousemove = e => {
+  const r = cv.getBoundingClientRect(), W = cv.clientWidth;
+  const fx = (e.clientX - r.left - 8) / (W - 16), fy = (e.clientY - r.top - 8) / (W - 16);
+  const gx = Math.floor(fx * G), gy = Math.floor(fy * G); let best = null, bd = 1e9;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cell = grid[(gy + dy) * G + gx + dx]; if (!cell || gx + dx < 0 || gx + dx >= G) continue;
+    for (const i of cell) { const d = (X[i] - fx) ** 2 + (Y[i] - fy) ** 2; if (d < bd) { bd = d; best = i; } }
+  }
+  const tip = $("tip");
+  if (best == null || bd > 0.0001) { tip.style.display = "none"; hover = null; return; }
+  hover = best; tip.style.display = "block"; tip.style.left = e.clientX + 12 + "px"; tip.style.top = e.clientY + 12 + "px";
+  const spikes = sim ? sim.count[best] : 0;
+  tip.innerHTML = `<b>${meta.types[TYP[best]]}</b> · ${CLASS_RU[meta.classes[CLS[best]]] || ""}${sim ? `<br>спайков: ${spikes}` : ""}`;
+};
+cv.onmouseleave = () => { $("tip").style.display = "none"; hover = null; };
+
+// ---------- simulation ----------
+$("hz").oninput = e => $("hzv").textContent = e.target.value + " Гц";
+$("stim").oninput = e => $("stimv").textContent = e.target.value + " мс";
+$("ms").oninput = e => $("msv").textContent = e.target.value + " мс";
+$("go").onclick = async () => {
+  if (!chosen.size) return;
+  $("go").disabled = true; $("go").textContent = "Мозг думает…";
+  try {
+    const hz = +$("hz").value;
+    const r = await fetch("/api/brain/stimulate", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stims: [...chosen].map(p => ({ preset: p, hz })), ms: +$("ms").value, stim_ms: +$("stim").value }) });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    const sizes = new Int32Array(Uint8Array.from(atob(d.frame_sizes), ch => ch.charCodeAt(0)).buffer);
+    const flat = new Int32Array(Uint8Array.from(atob(d.spikes), ch => ch.charCodeAt(0)).buffer);
+    frames = []; let o = 0; const count = new Uint16Array(meta.n);
+    for (const s of sizes) { const f = flat.subarray(o, o + s); frames.push(f); for (const i of f) count[i]++; o += s; }
+    sim = { ...d, count }; t = 0; playing = true; $("play").textContent = "⏸";
+    renderOutputs(); drawActivity();
+  } catch (e) { $("summary").textContent = "Ошибка: " + e.message; }
+  $("go").disabled = false; $("go").textContent = "Запустить";
+};
+function renderOutputs() {
+  const max = Math.max(1, ...sim.outputs.map(o => o.hz));
+  $("summary").innerHTML = `Стимулировано нейронов: <b>${sim.stimulated}</b>. Хоть раз сработали: <b>${sim.active.toLocaleString("ru")}</b> из ${meta.n.toLocaleString("ru")}.` +
+    (sim.active > 5000 ? `<br><span style="color:#ff6b6b">Мозг ушёл в разгон — активность не гаснет даже после стимула.</span>` : "");
+  $("outputs").innerHTML = sim.outputs.slice(0, 16).map(o => `<div class="out" data-i="${o.index}"><b>${o.name}</b> · ${o.hz} Гц
+    <div class="what">${o.what}</div><div class="bar"><div style="width:${o.hz / max * 100}%"></div></div></div>`).join("") || `<p class="dim">До моторных и нисходящих нейронов сигнал не дошёл.</p>`;
+  document.querySelectorAll(".out").forEach(el => { el.onmouseenter = () => hover = +el.dataset.i; el.onmouseleave = () => hover = null; });
+}
+
+// ---------- animation ----------
+$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; if (playing && t >= frames.length) t = 0; };
+$("restart").onclick = () => { t = 0; playing = true; $("play").textContent = "⏸"; };
+let last = performance.now();
+function draw(now = performance.now()) {
+  const dt = now - last; last = now;
+  if (sim && playing) { t += dt * +$("speed").value / sim.bin_ms; if (t >= frames.length) { t = frames.length; playing = false; $("play").textContent = "▶"; } }
+  const [W, H] = size(), dpr = devicePixelRatio || 1;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; if (meta) drawBase(); }
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = "#05070a"; c.fillRect(0, 0, W, H);
+  if (base) c.drawImage(base, 0, 0, W, H);
+  if (sim) {
+    const k = Math.min(frames.length - 1, Math.floor(t));
+    c.globalCompositeOperation = "lighter";
+    for (let back = 5; back >= 0; back--) {
+      const f = frames[k - back]; if (!f) continue;
+      const alpha = back === 0 ? 1 : 0.5 / back, r = back === 0 ? 2.2 : 1.6;
+      c.globalAlpha = alpha;
+      for (const i of f) { if (X[i] < 0) continue; const [x, y] = toPx(i, W, H); c.fillStyle = CLASS_COLORS[meta.classes[CLS[i]]] || "#fff"; c.fillRect(x - r / 2, y - r / 2, r, r); }
+    }
+    c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
+    const ms = Math.min(sim.ms, t * sim.bin_ms);
+    $("time").innerHTML = `t = ${ms.toFixed(0)} мс ${ms < sim.stim_ms ? '<span class="stim">● стимул</span>' : ""}`;
+    drawActivity(ms);
+  }
+  if (hover != null && X[hover] >= 0) { const [x, y] = toPx(hover, W, H); c.strokeStyle = "#fff"; c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 7, 0, 7); c.stroke(); }
+  requestAnimationFrame(draw);
+}
+
+const act = $("activity");
+function drawActivity(ms = null) {
+  if (!sim) return;
+  const dpr = devicePixelRatio || 1, W = act.clientWidth, H = 120; act.width = W * dpr; act.height = H * dpr;
+  const c = act.getContext("2d"); c.scale(dpr, dpr);
+  const n = sim.by_class.length, maxTotal = Math.max(1, ...sim.by_class.map(r => r.reduce((a, b) => a + b, 0)));
+  const bw = W / n;
+  sim.by_class.forEach((row, i) => {
+    let y = H; row.forEach((v, cls) => { if (!v) return; const h = v / maxTotal * (H - 14); c.fillStyle = CLASS_COLORS[meta.classes[cls]] || "#777"; c.fillRect(i * bw, y - h, Math.max(1, bw - 0.5), h); y -= h; });
+  });
+  c.fillStyle = "rgba(245,184,61,.12)"; c.fillRect(0, 0, sim.stim_ms / sim.ms * W, H);
+  if (ms != null) { c.strokeStyle = "#fff"; c.beginPath(); c.moveTo(ms / sim.ms * W, 0); c.lineTo(ms / sim.ms * W, H); c.stroke(); }
+  c.fillStyle = "#8a91a3"; c.font = "11px system-ui"; c.fillText(`пик ${maxTotal} нейронов за ${sim.bin_ms} мс`, 4, 11);
+}
+act.onclick = e => { if (!sim) return; const r = act.getBoundingClientRect(); t = (e.clientX - r.left) / r.width * frames.length; playing = false; $("play").textContent = "▶"; };
+addEventListener("resize", () => meta && drawBase());
+init();
+</script>
+</body>
+</html>
