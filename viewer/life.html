@@ -84,7 +84,7 @@
       <div class="group">
         <button id="smell">Как чует муха</button>
         <button id="follow">Следить за мухой</button>
-        <button id="place">Положить плод</button>
+        <button id="place">Положить яблоко</button>
       </div>
       <span id="clock">—</span>
     </div>
@@ -103,12 +103,20 @@
       <div><span class="sym">🥚</span>яйцо; линия к матери у выбранной мухи</div>
       <div><span class="sym">🦅🕷️🐛</span>погибла от птицы, паука, сороконожки</div>
       <div><span class="sym">🍂⌛</span>умерла от голода, от старости</div>
-      <div><span class="sym" style="color:var(--fruit)">●</span>спелый плод пахнет фруктом</div>
-      <div><span class="sym" style="color:var(--vinegar)">●</span>бродящий плод пахнет уксусом</div>
+      <div><span class="sym" style="color:var(--fruit)">●</span>спелое яблоко пахнет фруктом</div>
+      <div><span class="sym" style="color:var(--vinegar)">●</span>брожение и гниль пахнут уксусом</div>
+      <div><span class="sym">🍎</span>еда конечна: съеденное уменьшается</div>
+      <div><span class="sym" style="color:#8a5a2b">●</span>помёт хищника — немного еды</div>
+      <div><span class="sym">🦠</span>серое тело — разлагается и станет едой</div>
+      <div><span class="sym">🕸️</span>паутина: бледнее — старее и слабее</div>
+      <div><span class="sym">🐜</span>муравьи уносят еду в муравейник</div>
+      <div><span class="sym">🌼</span>цветок: нектар пополняется; 🌱 росток</div>
+      <div><span class="sym" style="color:#ffe066">∴</span>жёлтые точки — муха несёт пыльцу</div>
     </div>
     <p class="note" style="margin-top:10px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, прыжок — гигантское волокно DNp01,
       долгий перелёт — DNp02/DNp04/DNp11, еду — моторный нейрон хоботка MN9. Шаг и полёт исполняет модель тела: нейроны ног и крыльев лежат
-      в брюшной нервной цепочке, их нет в данных мозга. Паук и сороконожка — скриптовые, но мухи видят их только глазами, усиками и касанием.</p>
+      в брюшной нервной цепочке, их нет в данных мозга. Паук, сороконожки, муравьи и цветы — скриптовые, но мухи видят их только глазами, усиками и касанием.
+      Яблоки появляются, только когда их кладёт зритель; остальная еда — помёт хищников, разложившиеся тела и нектар цветов.</p>
   </section>
   <aside>
     <div class="label">
@@ -139,7 +147,10 @@ const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "в�
 const GENE_COLORS = ["#86b5d1", "#ffb347", "#98bd6c", "#dd6a55", "#a58bff", "#ece5cf"];
 const DEATH_ICON = { death_bird: "🦅", death_spider: "🕷️", death_centipede: "🐛", death_starved: "🍂", death_old: "⌛" };
 const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight: "🪽", escape: "✨", web_stuck: "🕸️", web_free: "💪", web_struggle: "…",
-  fruit_drop: "🍑", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", ...DEATH_ICON };
+  fruit_drop: "🍎", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
+  web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
+  centipede_arrived: "🐛", centipede_died: "💀", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
+  pollinated: "🌼", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀", ...DEATH_ICON };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
 let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = false;
@@ -157,8 +168,8 @@ async function refresh() {
     sel.value = run;
   }
   if (!run) return;
-  if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta?.arena.obstacles) { await spritesReady; buildGround(); camera.reset(); } }
-  if (!meta || !meta.arena.obstacles) return;
+  if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta?.arena.nest) { await spritesReady; buildGround(); camera.reset(); } }
+  if (!meta || !meta.arena.nest) return;
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
   if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
   while (status && chunkLoaded + 1 < status.chunks) {
@@ -171,7 +182,9 @@ async function refresh() {
     const stopped = Date.now() / 1000 - status.time > 120;
     const chip = (v, label) => `<div class="reading"><b>${v}</b> <span>${label}</span></div>`;
     $("status").innerHTML = chip(status.alive, "живых") + chip(status.eggs ?? 0, "яиц") + chip(status.births ?? 0, "родилось") +
-      chip(fmt(status.sim_s), "мирового времени") + chip(`${status.speed}×`, stopped ? "остановлена" : "скорость расчёта");
+      chip(fmt(status.sim_s), "мирового времени") + chip(`${status.speed}×`, stopped ? "остановлена" : "скорость расчёта") +
+      (status.counters ? chip(status.counters.long_flights, "долгих перелётов") + chip(status.counters.water_crossings, "через воду") +
+        chip(status.counters.pollinations ?? 0, "опылений") : "");
   }
   if (simT == null && frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 3);
   renderFeed(); drawPop();
@@ -284,15 +297,14 @@ function buildGround() {
     }
     c.restore();
   }
-  // web (static threads)
-  const [wx, wy, wr] = meta.arena.web;
-  c.save(); c.translate(wx * PX, wy * PX);
-  if (SPR.web?.naturalWidth) { const s = wr * 2.3 * PX; c.globalAlpha = 0.9; c.drawImage(SPR.web, -s / 2, -s / 2, s, s); c.globalAlpha = 1; }
-  else {
-    c.strokeStyle = "rgba(240,240,235,.55)"; c.lineWidth = 1;
-    for (let k = 0; k < 16; k++) { const t = k / 16 * 6.283; c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(t) * wr * PX * 1.05, Math.sin(t) * wr * PX * 1.05); c.stroke(); }
-    for (let r = 4; r < wr * PX; r += 5) { c.beginPath(); for (let k = 0; k <= 16; k++) { const t = k / 16 * 6.283; c.lineTo(Math.cos(t) * r, Math.sin(t) * r); } c.stroke(); }
-  }
+  // ant hill: a mound of crumbs with a dark entrance
+  const [nx, ny] = meta.arena.nest;
+  c.save(); c.translate(nx * PX, ny * PX);
+  const mound = c.createRadialGradient(-4, -4, 2, 0, 0, 16 * PX);
+  mound.addColorStop(0, "#a07b4e"); mound.addColorStop(0.7, "#6e5232"); mound.addColorStop(1, "rgba(80,60,35,0)");
+  c.fillStyle = mound; c.beginPath(); c.arc(0, 0, 16 * PX, 0, 7); c.fill();
+  c.fillStyle = "rgba(190,160,110,.7)"; for (let k = 0; k < 40; k++) { const a = rnd() * 6.283, r = rnd() * 11 * PX; c.fillRect(Math.cos(a) * r, Math.sin(a) * r, 2, 2); }
+  c.fillStyle = "#1c140c"; c.beginPath(); c.ellipse(0, 0, 3 * PX, 2.2 * PX, 0.3, 0, 7); c.fill();
   c.restore();
   buildMini();
 }
@@ -365,8 +377,8 @@ function drawSpider(c, x, y, size, heading, moving, t) {
   c.fillStyle = "#ff5a4a"; for (const ex of [-1, 1]) { c.beginPath(); c.arc(ex * size * .06, -size * .26, size * .03, 0, 7); c.fill(); }
   c.restore();
 }
-function drawCentipede(c, pts, z, t, hunting, heading) {
-  if (SPR.centipede_body?.naturalWidth && SPR.centipede_head?.naturalWidth) return drawCentipedeSprite(c, pts, z, t, hunting, heading);
+function drawCentipede(c, pts, z, t, hunting, heading, resting = 0, size = 1) {
+  if (SPR.centipede_body?.naturalWidth && SPR.centipede_head?.naturalWidth) return drawCentipedeSprite(c, pts, z, t, hunting, heading, resting, size);
   if (pts.length < 2) return;
   const P = pts.map(p => camera.toScreen(p[0], p[1]));
   const seg = Math.min(P.length, 11);
@@ -388,9 +400,9 @@ function drawCentipede(c, pts, z, t, hunting, heading) {
     }
   }
 }
-function drawCentipedeSprite(c, pts, z, t, hunting, heading) {
+function drawCentipedeSprite(c, pts, z, t, hunting, heading, resting = 0, size = 1) {
   // lay head, 10 segments and tail along the path the centipede actually walked
-  const Wmm = 9, segLen = Wmm * SPR.centipede_body.naturalHeight / SPR.centipede_body.naturalWidth;
+  const Wmm = 9 * size, segLen = Wmm * SPR.centipede_body.naturalHeight / SPR.centipede_body.naturalWidth;
   const headLen = Wmm * SPR.centipede_head.naturalHeight / SPR.centipede_head.naturalWidth;
   const tailLen = Wmm * SPR.centipede_tail.naturalHeight / SPR.centipede_tail.naturalWidth;
   const poly = [pts[0]];
@@ -412,7 +424,7 @@ function drawCentipedeSprite(c, pts, z, t, hunting, heading) {
     c.drawImage(img, -Wmm * z / 2, -len * z / 2, Wmm * z, len * z); c.restore();
   };
   c.imageSmoothingEnabled = false;
-  const speed = hunting ? 18 : 10, n = 10;
+  const speed = resting ? 0 : hunting ? 18 : 10, n = 10;
   stamp(SPR.centipede_tail, n * segLen * 0.92 + tailLen / 2, tailLen, Math.sin(t * speed) * 0.05);
   for (let i = n - 1; i >= 0; i--) stamp(SPR.centipede_body, i * segLen * 0.92 + segLen / 2, segLen, Math.sin(t * speed + i * 0.9) * 0.07);
   stamp(SPR.centipede_head, -headLen / 2 + segLen * 0.15, headLen, 0);
@@ -426,6 +438,86 @@ function drawBird(c, x, y, scale, angle, alpha) {
   c.quadraticCurveTo(scale * .2, scale * .12, scale * .6, 0); c.fill(); c.restore();
 }
 
+function drawWeb(c, sx, sy, r, strength, build, z, id, t) {
+  // new webs are bright; old ones fade; while built the web grows and turns with the spider
+  const s = r * 2.3 * z, alpha = 0.15 + 0.75 * Math.pow(Math.max(0, strength), 0.7);
+  c.save(); c.translate(sx, sy); c.rotate(id * 1.3 + (build < 1 ? build * 3 : 0)); c.globalAlpha = build < 1 ? 0.35 + 0.55 * build : alpha;
+  if (SPR.web?.naturalWidth) { c.imageSmoothingEnabled = false; c.drawImage(SPR.web, -s / 2, -s / 2, s, s); }
+  else {
+    c.strokeStyle = "rgba(240,240,235,.8)"; c.lineWidth = 1;
+    for (let k = 0; k < 16; k++) { const a = k / 16 * 6.283; c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(a) * r * z, Math.sin(a) * r * z); c.stroke(); }
+    for (let rr = 3; rr < r * z; rr += 2.5 * z) { c.beginPath(); for (let k = 0; k <= 16; k++) { const a = k / 16 * 6.283; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); } c.stroke(); }
+  }
+  c.restore();
+  if (build < 1) { c.strokeStyle = "rgba(255,255,240,.5)"; c.setLineDash([2, 4]); c.lineWidth = 1; c.beginPath(); c.arc(sx, sy, r * z, 0, 6.283 * build); c.stroke(); c.setLineDash([]); }
+}
+function drawDropping(c, sx, sy, frac, decay, z, id) {
+  // small brown blobs; they dry lighter and shrink as eaten
+  const r = z * 2.2 * (0.5 + 0.5 * Math.sqrt(frac)), dry = decay;
+  c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(sx + r * .2, sy + r * .3, r * 1.2, r * .8, 0, 0, 7); c.fill();
+  const col = `rgb(${Math.round(92 + 60 * dry)},${Math.round(60 + 45 * dry)},${Math.round(32 + 30 * dry)})`;
+  c.fillStyle = col;
+  for (let k = 0; k < 3; k++) { const a = id * 2.1 + k * 2.2, d = k ? r * .7 : 0; c.beginPath(); c.arc(sx + Math.cos(a) * d, sy + Math.sin(a) * d, r * (k ? .6 : .85), 0, 7); c.fill(); }
+  c.fillStyle = `rgba(255,240,200,${0.25 * (1 - dry)})`; c.beginPath(); c.arc(sx - r * .3, sy - r * .3, r * .25, 0, 7); c.fill();
+}
+function drawCorpse(c, sx, sy, frac, ready, decay, z, id) {
+  // grey fly; turns brown-green while decomposing, shrinks when eaten
+  const size = 5.5 * z * (0.55 + 0.45 * Math.sqrt(frac));
+  c.save(); c.translate(sx, sy); c.rotate(0.4 + id); c.scale(1, -1);
+  c.globalAlpha = 0.9 - 0.4 * decay;
+  c.filter = `grayscale(${1 - 0.6 * ready}) sepia(${0.7 * ready}) hue-rotate(${40 * ready}deg) brightness(${0.55 - 0.15 * decay})`;
+  if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size);
+  c.restore();
+}
+function drawCarcass(c, sx, sy, frac, ready, decay, z, id, size) {
+  // a dead centipede: body segments in a slack curve, greying and shrinking
+  const img = SPR.centipede_body;
+  const n = Math.max(2, Math.round(10 * Math.sqrt(frac))), Wmm = 9 * size, seg = img?.naturalWidth ? Wmm * img.naturalHeight / img.naturalWidth : 4;
+  c.save(); c.globalAlpha = 0.95 - 0.45 * decay; c.filter = `grayscale(${0.6 + 0.4 * decay}) brightness(${0.6 - 0.2 * ready})`; c.imageSmoothingEnabled = false;
+  let x = sx, y = sy, a = id * 0.9;
+  for (let i = 0; i < n; i++) {
+    c.save(); c.translate(x, y); c.rotate(a + Math.PI / 2);
+    if (img?.naturalWidth) c.drawImage(img, -Wmm * z / 2, -seg * z / 2, Wmm * z, seg * z); else { c.fillStyle = "#6b5a4e"; c.beginPath(); c.ellipse(0, 0, 4 * z, 2.5 * z, 0, 0, 7); c.fill(); }
+    c.restore();
+    x += Math.cos(a) * seg * z * .9; y += Math.sin(a) * seg * z * .9; a += 0.18;
+  }
+  c.restore();
+}
+function drawFlower(c, sx, sy, nectar, grown, wither, hue, z, id, t) {
+  if (grown < 1) {   // seedling: a sprout with two leaves growing up
+    const g = Math.max(.15, grown), L = 5 * z * g;
+    c.strokeStyle = "#5f9e3a"; c.lineWidth = Math.max(1, z * .5); c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx, sy - L * .4); c.stroke();
+    c.fillStyle = "#79c04a";
+    for (const s of [-1, 1]) { c.beginPath(); c.ellipse(sx + s * L * .35, sy - L * .45, L * .38, L * .16, s * -.5 + Math.sin(t * 2 + id) * .05, 0, 7); c.fill(); }
+    if (grown > .6) { c.fillStyle = `hsl(${hue},70%,70%)`; c.beginPath(); c.arc(sx, sy - L * .45, z * 1.2 * (grown - .6) / .4 + .5, 0, 7); c.fill(); }
+    return;
+  }
+  const R = 4.2 * z * (1 - 0.35 * wither * wither), sat = 75 - 55 * wither, light = 65 - 20 * wither;
+  c.fillStyle = "rgba(0,0,0,.22)"; c.beginPath(); c.arc(sx + R * .2, sy + R * .25, R * 1.05, 0, 7); c.fill();
+  c.fillStyle = "#4f8a33"; for (const s of [-1, 1]) { c.beginPath(); c.ellipse(sx + s * R * .9, sy + R * .5, R * .6, R * .22, s * .6, 0, 7); c.fill(); }
+  c.save(); c.translate(sx, sy); c.rotate(id * .7 + Math.sin(t * .8 + id) * .04);
+  c.fillStyle = `hsl(${hue},${sat}%,${light}%)`;
+  for (let k = 0; k < 5; k++) { const a = k / 5 * 6.283; c.beginPath(); c.ellipse(Math.cos(a) * R * .55, Math.sin(a) * R * .55, R * .5, R * .3 * (1 - .4 * wither), a, 0, 7); c.fill(); }
+  c.restore();
+  const fill = Math.min(1, nectar / 30);
+  c.fillStyle = `rgba(255,${Math.round(190 + 40 * fill)},60,${.6 + .4 * fill})`; c.beginPath(); c.arc(sx, sy, R * (.18 + .17 * fill), 0, 7); c.fill();
+}
+function drawAnt(c, sx, sy, heading, z, t, carrying, moving) {
+  const s = z * 1.1;
+  c.save(); c.translate(sx, sy); c.rotate(heading);
+  c.strokeStyle = "#1b120c"; c.lineWidth = Math.max(.8, s * .22);
+  for (const side of [-1, 1]) for (let k = -1; k <= 1; k++) {
+    const w = moving ? Math.sin(t * 25 + k * 2 + side) * .35 : 0;
+    c.beginPath(); c.moveTo(k * s * .35, 0); c.lineTo(k * s * .5 + w * s * .5, side * s * 1.1); c.stroke();
+  }
+  c.fillStyle = "#24170e";
+  c.beginPath(); c.ellipse(-s * .95, 0, s * .6, s * .42, 0, 0, 7); c.fill();   // abdomen
+  c.beginPath(); c.ellipse(0, 0, s * .38, s * .25, 0, 0, 7); c.fill();          // thorax
+  c.beginPath(); c.arc(s * .6, 0, s * .3, 0, 7); c.fill();                     // head
+  if (carrying) { c.fillStyle = "#e9c46a"; c.beginPath(); c.arc(s * 1.1, 0, s * .35, 0, 7); c.fill(); }
+  c.restore();
+}
+
 // ============ odor ============
 function plumeDraw(c, name, sx, sy, amount, wind, sigma) {
   const ws = Math.hypot(wind[0], wind[1]), ang = Math.atan2(wind[1], wind[0]);
@@ -436,17 +528,27 @@ function plumeDraw(c, name, sx, sy, amount, wind, sigma) {
   c.drawImage(SOFT[name], -s * 2.2, -s * 2.2, s * 4.4 * stretch, s * 4.4);   // shifted downwind by the stretch
   c.restore();
 }
+function odorSources(f) {
+  // mirrors Arena.food_arrays: strength follows the remaining amount (odor_ref), bodies/droppings smell of vinegar, flowers faintly of fruit
+  const ref = meta.arena.odor_ref || 120, out = [];
+  for (const [, x, y, amount, fresh] of f.fruits || []) {
+    const s = Math.min(1, amount / ref); out.push(["fruit", x, y, s * fresh], ["vinegar", x, y, s * (1 - fresh) * 1.2]);
+  }
+  for (const [, kind, x, y, amount, , ready, decay] of f.food || []) {
+    if (ready < 1) continue;
+    out.push(["vinegar", x, y, Math.min(1, amount / ref) * (kind === "corpse" ? 0.8 : 1) * (1 - 0.5 * decay)]);
+  }
+  for (const [, x, y, nectar, max, grown] of f.flowers || []) if (grown >= 1) out.push(["fruit", x, y, 0.4 * Math.min(1, nectar / max)]);
+  if (f.spider) out.push(["predator", f.spider[0], f.spider[1], 0.8]);
+  for (const ce of f.centipedes || []) out.push(["predator", ce[1], ce[2], ce[8] || 1]);
+  return out;
+}
 const particles = [];
 function emitParticles(f, dt) {
   const add = (name, x, y, rate) => {
     let n = rate * dt; while (n > 0) { if (Math.random() < n) particles.push({ name, x: x + ri(-3, 3), y: y + ri(-3, 3), age: 0, life: ri(3, 6), r: ri(2, 4) }); n -= 1; }
   };
-  for (const [, x, y, sugar, fresh] of f.fruits) {
-    const s = Math.min(1, sugar / 60);
-    add("fruit", x, y, 5 * s * fresh); add("vinegar", x, y, 6 * s * (1 - fresh));
-  }
-  add("predator", meta.arena.web[0], meta.arena.web[1], 2);
-  add("predator", f.centipede[0], f.centipede[1], 3);
+  for (const [name, x, y, a] of odorSources(f)) add(name, x, y, (name === "predator" ? 2.5 : 6) * a);
   const w = f.wind;
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -467,7 +569,7 @@ function draw(now = performance.now()) {
   const c = view.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const got = meta && ground && frameAt(simT);
   if (!got) { c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H); c.fillStyle = "#a7a28b"; c.font = "17px 'Alegreya Sans', sans-serif";
-    c.fillText(meta && !meta.arena.obstacles ? "Этот прогон из старой версии мира — выберите новый прогон вверху" : "Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
+    c.fillText(meta && !meta.arena.nest ? "Этот прогон из старой версии мира — выберите новый прогон вверху" : "Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
   const [f, g, k, fi] = got, z = camera.z, t = now / 1000, L = f.light;
   if (follow && selected != null) { const q = f.flies.find(q => q[0] === selected); if (q) { camera.cx += (q[1] - camera.cx) * 0.15; camera.cy += (q[2] - camera.cy) * 0.15; camera.clamp(); } }
   const S = (x, y) => camera.toScreen(x, y);
@@ -491,13 +593,7 @@ function draw(now = performance.now()) {
     c.fillStyle = "rgba(8,10,14,.62)"; c.fillRect(0, 0, W, H);
     c.globalCompositeOperation = "lighter";
     const sig = meta.arena.odor_sigma;
-    for (const [, x, y, sugar, fresh] of f.fruits) {
-      const s = Math.min(1, sugar / 60);
-      if (fresh > 0.02) plumeDraw(c, "fruit", x, y, s * fresh * 0.9, f.wind, sig);
-      if (fresh < 0.98) plumeDraw(c, "vinegar", x, y, s * (1 - fresh), f.wind, sig);
-    }
-    plumeDraw(c, "predator", meta.arena.web[0], meta.arena.web[1], 0.7, f.wind, sig * 0.7);
-    plumeDraw(c, "predator", f.centipede[0], f.centipede[1], 0.8, f.wind, sig * 0.6);
+    for (const [name, x, y, a] of odorSources(f)) if (a > 0.02) plumeDraw(c, name, x, y, a * 0.9, f.wind, name === "predator" ? sig * 0.65 : sig);
     for (const q of f.flies) plumeDraw(c, "pheromone", q[1], q[2], 0.35, [0, 0], 6);
     c.globalCompositeOperation = "source-over";
   } else {
@@ -509,11 +605,25 @@ function draw(now = performance.now()) {
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
   }
 
-  // fruits (fall in when they first appear)
-  for (const [id, x, y, sugar, fresh, byViewer] of f.fruits) {
+  // webs under everything that walks
+  for (const [id, x, y, r, strength, build] of f.webs || []) { const [sx, sy] = S(x, y); drawWeb(c, sx, sy, r, strength, build, z, id, t); }
+  // flowers, droppings, bodies
+  for (const [id, x, y, nectar, max, grown, wither, hue] of f.flowers || []) { const [sx, sy] = S(x, y); drawFlower(c, sx, sy, nectar, grown, wither, hue, z, id, t); }
+  for (const [id, kind, x, y, amount, whole, ready, decay, src] of f.food || []) {
+    const [sx, sy] = S(x, y), frac = whole ? amount / whole : 1;
+    if (kind === "dropping") drawDropping(c, sx, sy, frac, decay, z, id);
+    else if (kind === "corpse") drawCorpse(c, sx, sy, frac, ready, decay, z, id);
+    else drawCarcass(c, sx, sy, frac, ready, decay, z, id, Math.sqrt(whole / 300));
+    if (!smellMode && ready >= 1 && decay < .8 && kind !== "dropping") {   // decomposition specks
+      c.fillStyle = "rgba(200,220,140,.45)";
+      for (let b = 0; b < 2; b++) { const ph = (t * .5 + b / 2 + id * .37) % 1; c.beginPath(); c.arc(sx + (b - .5) * 4 * z, sy - ph * 5 * z, .6 + z * .2 * (1 - ph), 0, 7); c.fill(); }
+    }
+  }
+  // apples (fall in when they first appear; shrink while eaten)
+  for (const [id, x, y, sugar, fresh, byViewer, whole] of f.fruits) {
     if (!firstSeen.has(id)) firstSeen.set(id, drawnOnce ? now : -1e9);
     const fall = Math.min(1, (now - firstSeen.get(id)) / 700);
-    const rad = 6 * Math.sqrt(Math.max(sugar, 60) / 500), size = rad * z * 1.45 * (0.6 + 0.4 * Math.min(1, sugar / 500));
+    const w0 = whole || 500, rad = (6 * Math.sqrt(w0 / 500) + 1.5) * (0.5 + 0.5 * Math.sqrt(Math.max(0, sugar) / w0)), size = rad * z * 1.2;
     const [sx, sy] = S(x, y), drop = (1 - fall) * 60;
     if (fall < 1) { c.fillStyle = `rgba(0,0,0,${0.3 * fall})`; c.beginPath(); c.ellipse(sx, sy, size * fall, size * .7 * fall, 0, 0, 7); c.fill(); }
     drawApple(c, sx, sy - drop, size, fresh);
@@ -564,23 +674,38 @@ function draw(now = performance.now()) {
     }
   }
 
-  // corpses
-  for (const e of events) {
-    if (!e.kind.startsWith("death_") || e.fly < 0 || e.t > f.t || f.t - e.t > 60 || e.x == null) continue;
-    const fade = 1 - (f.t - e.t) / 60, [sx, sy] = S(e.x, e.y), size = 5.5 * z;
-    c.save(); c.globalAlpha = .35 + .55 * fade; c.translate(sx, sy); c.rotate(0.4 + e.fly); c.scale(1, -1); c.filter = "grayscale(1) brightness(.55)";
-    if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size); c.restore();
-    c.globalAlpha = .5 + .5 * fade; c.font = `${Math.max(12, z * 4)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle";
-    c.fillText(DEATH_ICON[e.kind] || "✝", sx + size * .6, sy - size * .6); c.globalAlpha = 1;
+  // death marks (bodies of starved/old flies are food items above; the others were eaten or carried off)
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.t > f.t) continue;
+    if (f.t - e.t > 30) break;
+    if (!e.kind.startsWith("death_") || e.fly < 0 || e.x == null) continue;
+    const fade = 1 - (f.t - e.t) / 30, [sx, sy] = S(e.x, e.y);
+    c.globalAlpha = .3 + .7 * fade; c.font = `${Math.max(12, z * 4)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(DEATH_ICON[e.kind] || "✝", sx + 3 * z, sy - 3 * z); c.globalAlpha = 1;
   }
+
+  // ants
+  const antsNext = g.ants || [];
+  (f.ants || []).forEach((a, i) => {
+    const b = antsNext[i] || a, x = a[0] + (b[0] - a[0]) * k, y = a[1] + (b[1] - a[1]) * k;
+    if (a[3] === 4) return;   // inside the nest
+    const [sx, sy] = S(x, y); drawAnt(c, sx, sy, a[2], z, t, a[4], Math.hypot(b[0] - a[0], b[1] - a[1]) > 0.02);
+  });
 
   // spider
   const sp = f.spider, [spx, spy] = S(sp[0], sp[1]), spn = g.spider;
   drawSpider(c, spx, spy, 9 * z, sp[2], Math.hypot(spn[0] - sp[0], spn[1] - sp[1]) > 0.05, t);
-  // centipede
-  const ce = f.centipede, body = [[ce[0], ce[1]], ...ce[4].slice(1)];
-  drawCentipede(c, body, z, t, ce[3] >= 0, ce[2]);
-  if (ce[3] >= 0) { const [hx, hy] = S(ce[0], ce[1]); c.fillStyle = "rgba(221,106,85,.9)"; c.font = `${Math.max(12, z * 3.5)}px system-ui`; c.textAlign = "center"; c.fillText("!", hx, hy - 4 * z); }
+  if (sp[5] != null && sp[5] < .15) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("голоден", spx, spy - 6 * z); }
+  // centipedes
+  for (const ce of f.centipedes || []) {
+    const body = [[ce[1], ce[2]], ...ce[5].slice(1)];
+    drawCentipede(c, body, z, t, ce[4] >= 0, ce[3], ce[7], ce[8] || 1);
+    const [hx, hy] = S(ce[1], ce[2]);
+    c.font = `${Math.max(12, z * 3.5)}px system-ui`; c.textAlign = "center";
+    if (ce[4] >= 0) { c.fillStyle = "rgba(221,106,85,.9)"; c.fillText("!", hx, hy - 4 * z); }
+    else if (ce[7]) { c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("zz", hx, hy - 4 * z); }
+  }
 
   // flies
   const next = new Map(g.flies.map(q => [q[0], q]));
@@ -601,6 +726,7 @@ function draw(now = performance.now()) {
     c.beginPath(); c.arc(sx, sy, size * .62, -Math.PI / 2, -Math.PI / 2 + 6.283 * Math.max(.03, life)); c.stroke();
     if (q[6] < 30) { c.fillStyle = `rgba(255,255,220,${.9 - q[6] / 35})`; for (let s = 0; s < 4; s++) { const a = t * 2.5 + s * 1.57; c.beginPath(); c.arc(sx + Math.cos(a) * size * .8, sy + Math.sin(a) * size * .8, 1.6, 0, 7); c.fill(); } }
     if (stuck) { c.strokeStyle = "#f0b54c"; c.lineWidth = Math.max(2, z * .6); c.beginPath(); c.arc(sx, sy, size * .85, -Math.PI / 2, -Math.PI / 2 + 6.283 * Math.min(1, q[13] || 0)); c.stroke(); }
+    if (q[14]) { c.fillStyle = "rgba(255,224,102,.95)"; for (let s = 0; s < 3; s++) { c.beginPath(); c.arc(sx + (s - 1) * size * .18, sy + size * (.05 + .1 * (s % 2)), Math.max(1, z * .35), 0, 7); c.fill(); } }
     if (q[4] === 1) { c.font = `${Math.max(11, z * 3)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🍯", sx + size * .65, sy - size * .5); }
     if (q[5] < .15) { c.fillStyle = "#dd6a55"; c.beginPath(); c.arc(sx - size * .55, sy - size * .55, Math.max(2.5, z * .7), 0, 7); c.fill(); }
     if (q[0] === selected) {
@@ -639,8 +765,11 @@ function drawMini(f) {
   const c = m.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (miniBase) c.drawImage(miniBase, 0, 0, W, H);
   const sx = W / meta.arena.width, sy = H / meta.arena.height;
+  c.strokeStyle = "rgba(240,240,235,.7)"; c.lineWidth = 1; for (const w of f.webs || []) { c.globalAlpha = .3 + .7 * w[4]; c.beginPath(); c.arc(w[1] * sx, w[2] * sy, Math.max(2, w[3] * sx), 0, 7); c.stroke(); } c.globalAlpha = 1;
   c.fillStyle = "rgba(255,179,71,.9)"; for (const fr of f.fruits) { c.beginPath(); c.arc(fr[1] * sx, fr[2] * sy, 2, 0, 7); c.fill(); }
-  c.fillStyle = "#dd6a55"; c.beginPath(); c.arc(f.centipede[0] * sx, f.centipede[1] * sy, 3, 0, 7); c.fill();
+  c.fillStyle = "#b07a45"; for (const fd of f.food || []) c.fillRect(fd[2] * sx - 1, fd[3] * sy - 1, 2, 2);
+  for (const fl of f.flowers || []) { c.fillStyle = `hsl(${fl[7]},70%,65%)`; c.fillRect(fl[1] * sx - 1, fl[2] * sy - 1, 2.5, 2.5); }
+  c.fillStyle = "#dd6a55"; for (const ce of f.centipedes || []) { c.beginPath(); c.arc(ce[1] * sx, ce[2] * sy, 3, 0, 7); c.fill(); }
   c.fillStyle = "rgba(236,229,207,.75)"; for (const q of f.flies) c.fillRect(q[1] * sx - 1, q[2] * sy - 1, 2, 2);
   const me = f.flies.find(q => q[0] === selected); if (me) { c.strokeStyle = "#f0b54c"; c.lineWidth = 2; c.beginPath(); c.arc(me[1] * sx, me[2] * sy, 5, 0, 7); c.stroke(); }
   const [x0, y0] = camera.toWorld(0, 0), [x1, y1] = camera.toWorld(view.clientWidth, view.clientHeight);
@@ -670,7 +799,7 @@ function panel(f, fi) {
   }
   const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname]} ×${q[10][i]}`).join(", ");
   const kids = f.flies.filter(z => z[9] === selected).length, eggs = (f.eggs || []).filter(e => e[3] === selected).length;
-  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b></div>` +
+  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b>${q[14] ? ", несёт пыльцу" : ""}</div>` +
     `<div>Поколение <b>${q[8]}</b>${q[9] >= 0 ? `, мать №${q[9]}` : ", из первых мух"}; дочерей рядом ${kids}, яиц ${eggs}</div>` +
     `<div class="note" style="margin-top:4px">Гены: ${genes}</div>`;
   $("caption").hidden = false; $("caption").innerHTML = caption(fi) || `<span class="dim">Ничего заметного за последние секунды.</span>`;
@@ -717,7 +846,7 @@ function caption(fi) {
 // ============ feed ============
 function renderFeed() {
   const tNow = simT ?? 0;
-  const noisy = ["feed", "web_struggle", "hop"];
+  const noisy = ["feed", "web_struggle", "hop", "long_flight", "flight", "centipede_hunt", "centipede_lost"];
   const list = events.filter(e => e.t <= tNow + 0.1 &&
     (selected == null ? (e.fly === -1 || !noisy.includes(e.kind)) : (e.fly === selected || e.fly === -1))).slice(-80).reverse();
   $("feed").innerHTML = list.map((e, i) => `<li data-i="${i}"><span class="t">${fmt(e.t)}</span>${FEED_ICON[e.kind] || "·"} ${e.fly >= 0 ? `№${e.fly} ` : ""}${e.text}</li>`).join("") ||
