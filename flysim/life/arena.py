@@ -287,7 +287,7 @@ class Arena:
         else:
             c.x, c.y = float(nx), float(ny)
         c.body.insert(0, (round(c.x, 1), round(c.y, 1)))
-        del c.body[40:]
+        del c.body[360:]
 
     def apply_commands(self, path, t: float, done: int) -> int:
         """Apply viewer commands appended to a JSONL file; returns lines processed."""
@@ -317,7 +317,7 @@ class Arena:
             "shadows": [[sh.target, round((t - sh.t_start) / sh.duration, 3), round(sh.direction, 2)] for sh in self.shadows],
             "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1],
             "centipede": [round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
-                          c.body[::4]],
+                          c.body[::12]],
         }
 
     def static(self) -> dict:
