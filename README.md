@@ -70,9 +70,11 @@ connectome and the published LIF model. Around it:
   "vinegar" odorant (fermenting matter) rather than an invented new receptor
   profile. Food size, odor and taste follow the remaining amount; flies and
   ants eat it away. The world starts with a few old droppings.
-- **Animals**: the spider builds webs where a running heatmap says flies walk
-  (or near food), webs weaken with age and when flies tear free; the centipede
-  hunts by sight/vibration; both have hunger (hunt only when hungry, slow down
+- **Animals**: spiders build webs where a running heatmap says flies walk
+  (or near food) and collect flies from their own webs; webs weaken with age
+  and when flies tear free; centipedes hunt by sight/vibration. The world
+  starts with one spider; the viewer can release more spiders and centipedes
+  (up to 4 of each) like it drops apples; both have hunger (hunt only when hungry, slow down
   and rest when starving); ants forage and carry food home; birds dive in
   daylight. Flies perceive all of them only through vision salience, looming,
   odor and touch. Tuning numbers are ours (ArenaConfig).
