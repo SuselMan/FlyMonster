@@ -4,58 +4,124 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Жизнь мух</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,500;0,700;1,500&family=Alegreya+Sans:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0b0d10; --panel:#14171d; --line:#252a33; --text:#e6e8ee; --dim:#8a91a3; --accent:#f5b83d; --good:#4cc38a; --bad:#e5604d; --blue:#5aa9f0; }
+  /* Naturalist's field station at night: the terrarium is lit, everything around it is quiet. */
+  :root {
+    --night:#141a13; --bench:#1d251b; --rim:#34402f; --paper:#ebe4cf; --faded:#a39f8a;
+    --lamp:#e9b04a; --moss:#93b86a; --blood:#d8604f; --sky:#79a9c9;
+    --fruit:#ff9f2e; --spider:#b98bff; --fly:#5ad69f;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; padding:14px 16px; }
-  header { display:flex; flex-wrap:wrap; gap:8px 20px; align-items:baseline; margin-bottom:12px; }
-  h1 { font-size:20px; margin:0; } h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:0 0 8px; font-weight:600; }
-  a { color:var(--blue); } .dim { color:var(--dim); } b { font-weight:600; }
-  .layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:12px; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
-  canvas { display:block; width:100%; border-radius:8px; }
-  .controls { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px; }
-  .controls button, .controls select { background:#1a1e26; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 10px; font:inherit; cursor:pointer; }
-  .controls button.on { border-color:var(--accent); color:var(--accent); }
-  .bar { display:grid; grid-template-columns:90px 1fr 40px; gap:6px; align-items:center; margin:4px 0; font-size:12px; }
-  .track { height:8px; background:#0f1217; border-radius:4px; overflow:hidden; } .fill { height:100%; border-radius:4px; }
-  #diary { list-style:none; padding:0; margin:0; max-height:300px; overflow:auto; font-size:13px; }
-  #diary li { padding:4px 2px; border-bottom:1px solid var(--line); }
-  #diary .t { color:var(--dim); font-variant-numeric:tabular-nums; margin-right:6px; }
-  .note { color:var(--dim); font-size:12px; }
-  @media (max-width:1000px) { .layout { grid-template-columns:1fr; } }
+  body { margin:0; background:radial-gradient(ellipse at 35% 20%, #1f2a1d 0%, var(--night) 60%) fixed; color:var(--paper);
+         font:15px/1.5 "Alegreya Sans", "Segoe UI", system-ui, sans-serif; padding:18px 20px 28px; }
+  a { color:var(--sky); text-underline-offset:3px; }
+  .dim, .note { color:var(--faded); } .note { font-size:13px; max-width:78ch; } b { font-weight:700; }
+  button, select { font:inherit; color:var(--paper); background:var(--bench); border:1px solid var(--rim); border-radius:999px; padding:4px 12px; cursor:pointer; }
+  button:hover, select:hover { border-color:var(--faded); }
+  button:focus-visible, select:focus-visible, canvas:focus-visible { outline:2px solid var(--lamp); outline-offset:2px; }
+
+  .masthead { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px 28px; margin-bottom:16px; }
+  .masthead h1 { font-family:Alegreya, Georgia, serif; font-weight:700; font-size:34px; line-height:1; margin:0; letter-spacing:-.01em; }
+  .masthead h1 small { display:block; font-family:"Alegreya Sans", sans-serif; font-weight:400; font-size:15px; color:var(--faded); margin-top:6px; letter-spacing:0; }
+  .readings { display:flex; flex-wrap:wrap; gap:6px; }
+  .reading { background:var(--bench); border:1px solid var(--rim); border-radius:8px; padding:3px 10px; font-size:14px; }
+  .reading b { font-variant-numeric:tabular-nums; color:var(--paper); } .reading span { color:var(--faded); }
+  .masthead nav { margin-left:auto; display:flex; gap:14px; align-items:center; }
+
+  .station { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:22px; align-items:start; }
+  .terrarium { min-width:0; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:10px; }
+  .toolbar .group { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  #live.on { border-color:var(--lamp); color:var(--lamp); }
+  .layer { opacity:.5; } .layer.on { opacity:1; border-color:currentColor; }
+  .layer i { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:1px; }
+  #clock { font-variant-numeric:tabular-nums; color:var(--faded); }
+  .glass { position:relative; border-radius:18px; padding:10px; background:linear-gradient(145deg, #3a4636, #1b2219);
+           box-shadow:0 0 0 1px #0d110c, 0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08); }
+  #arena { display:block; width:100%; border-radius:10px; cursor:crosshair; max-height:80vh; max-width:80vh; margin:0 auto; }
+
+  .key { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:6px 18px; margin:14px 2px 0; font-size:13px; color:var(--faded); }
+  .key div { display:flex; gap:8px; align-items:center; } .key .sym { width:26px; text-align:center; font-size:16px; color:var(--paper); }
+
+  aside { min-width:0; }
+  .label { position:relative; background:var(--paper); color:#2a2618; border-radius:4px; padding:14px 16px 12px;
+           box-shadow:0 12px 30px rgba(0,0,0,.4); font-size:14px; }
+  .label::before { content:""; position:absolute; top:-7px; left:22px; width:12px; height:12px; border-radius:50%;
+                   background:radial-gradient(circle at 35% 35%, #e9e9e9, #7b7b7b); box-shadow:0 2px 3px rgba(0,0,0,.5); }
+  .label h2 { font-family:Alegreya, Georgia, serif; font-size:24px; margin:0 0 2px; font-weight:700; }
+  .label .dim, .label .note { color:#6d6650; }
+  .label .track { background:#d6cdb2; } .label .bar, .label .nose { color:#3b3524; }
+  .bar { display:grid; grid-template-columns:92px 1fr 54px; gap:8px; align-items:center; margin:5px 0; font-size:13px; }
+  .track { height:7px; background:#0e120d; border-radius:4px; overflow:hidden; } .fill { height:100%; border-radius:4px; }
+  .nose { display:grid; grid-template-columns:62px 1fr 1fr; gap:4px 10px; font-size:13px; margin:10px 0 6px; align-items:center; }
+  .nose .h { color:#6d6650; }
+  .log { margin-top:18px; }
+  .log h3, .census h3 { font-family:Alegreya, Georgia, serif; font-weight:500; font-style:italic; font-size:20px; margin:0 0 6px; }
+  #diary { list-style:none; padding:0; margin:0; max-height:330px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
+  #diary li { padding:4px 0 4px 12px; }
+  #diary .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
+  .census { margin-top:26px; }
+  #pop { display:block; width:100%; }
+  @media (max-width:1050px) { .station { grid-template-columns:1fr; } .masthead nav { margin-left:0; } }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>🪰 Жизнь мух</h1>
-  <select id="run"></select>
-  <span class="dim" id="status">—</span>
-  <a href="/viewer/brain.html">мозг</a> <a href="/viewer/flappy.html">Flappy Fly</a>
+<header class="masthead">
+  <h1>Жизнь мух<small>У каждой мухи — свой полный мозг из 138 639 нейронов</small></h1>
+  <div class="readings" id="status"></div>
+  <nav><select id="run" aria-label="Прогон"></select><a href="/viewer/brain.html">Мозг</a><a href="/viewer/flappy.html">Flappy Fly</a></nav>
 </header>
-<div class="layout">
-  <section class="panel">
-    <div class="controls">
-      <button id="play">⏸</button>
-      <button id="live" class="on">к прямому эфиру</button>
-      <select id="speed"><option value="0.25">×0.25</option><option value="1" selected>×1 (реальное время)</option><option value="4">×4</option><option value="16">×16</option></select>
-      <span class="dim" id="clock">—</span>
+<div class="station">
+  <section class="terrarium">
+    <div class="toolbar">
+      <div class="group">
+        <button id="play" aria-label="Пауза">⏸</button>
+        <button id="live" class="on">К прямому эфиру</button>
+        <select id="speed" aria-label="Скорость"><option value="0.25">×0.25</option><option value="1" selected>Реальное время</option><option value="4">×4</option><option value="16">×16</option></select>
+      </div>
+      <div class="group" aria-label="Слои запахов">
+        <button class="layer on" data-layer="fruit" style="color:var(--fruit)"><i style="background:var(--fruit)"></i>Запах еды</button>
+        <button class="layer on" data-layer="spider" style="color:var(--spider)"><i style="background:var(--spider)"></i>Запах паука</button>
+        <button class="layer" data-layer="fly" style="color:var(--fly)"><i style="background:var(--fly)"></i>Феромоны</button>
+        <button class="layer on" data-layer="trail" style="color:var(--lamp)"><i style="background:var(--lamp)"></i>След</button>
+      </div>
+      <span id="clock">—</span>
     </div>
-    <canvas id="arena"></canvas>
-    <p class="note">Каждой мухой управляет собственная симуляция всех 138 639 нейронов. Поворот — нейроны DNa01/DNa02, задний ход — MDN,
-      взлёт — гигантское волокно DNp01, еда — моторный нейрон хоботка MN9. Ходьба как таковая — врождённый генератор (нейроны ног
-      в брюшной нервной цепочке, их нет в данных мозга). Кликни на муху.</p>
+    <div class="glass"><canvas id="arena" tabindex="0" aria-label="Арена с мухами; кликните по мухе, чтобы открыть её карточку"></canvas></div>
+    <div class="key">
+      <div><span class="sym" style="color:var(--moss)">◔</span>кольцо — прожитая жизнь, полное = 60 мин</div>
+      <div><span class="sym">✦</span>блёстки — только что вылупилась</div>
+      <div><span class="sym">⇲</span>тень отъехала — муха в воздухе</div>
+      <div><span class="sym">🍯</span>ест сахар</div>
+      <div><span class="sym" style="color:var(--blood)">●</span>голодает</div>
+      <div><span class="sym">🥚</span>яйцо, вылупится через 90 с</div>
+      <div><span class="sym">🦅</span>погибла от птицы</div>
+      <div><span class="sym">🕸️</span>поймана пауком</div>
+      <div><span class="sym">🍂</span>умерла от голода</div>
+      <div><span class="sym">⌛</span>умерла от старости</div>
+    </div>
+    <p class="note" style="margin-top:12px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, взлёт — гигантское волокно DNp01,
+      еду — моторный нейрон хоботка MN9. Сам шаг — врождённый генератор: нейроны ног лежат в брюшной нервной цепочке, их нет в данных мозга.
+      Цветные полосы на земле — запахи, которые получают усики.</p>
   </section>
-  <section class="panel">
-    <h2 id="flyTitle">Выбери муху</h2>
-    <div id="flyInfo" class="dim">Клик по мухе на арене.</div>
-    <div id="flyBars"></div>
-    <h2 style="margin-top:14px">Дневник</h2>
-    <ul id="diary"></ul>
-  </section>
-  <section class="panel" style="grid-column:1/-1">
-    <h2>Население и гены (среднее по живым мухам)</h2>
-    <canvas id="pop" height="160"></canvas>
+  <aside>
+    <div class="label">
+      <h2 id="flyTitle">Выберите муху</h2>
+      <div id="flyInfo" class="dim">Кликните по мухе на арене — здесь появится её карточка: возраст, гены, что чувствуют усики и что делают нейроны.</div>
+      <div id="nose"></div>
+      <div id="flyBars"></div>
+    </div>
+    <div class="log">
+      <h3>Полевой дневник</h3>
+      <ul id="diary"></ul>
+    </div>
+  </aside>
+  <section class="census" style="grid-column:1/-1">
+    <h3>Перепись: сколько мух и как меняются их гены</h3>
+    <canvas id="pop" height="170"></canvas>
     <p class="note">Размножение клональное (все мухи — копии проводки одной самки из FlyWire), гены — только физиологические
       параметры: сила зрения, обоняния, вкуса, реакции на тень, чувствительность к голоду, скорость ходьбы. Память не наследуется;
       обучение грибовидных тел не включено — в этой модели изменение синапсов KC→MBON не меняет нисходящие нейроны.
@@ -67,120 +133,296 @@ const $ = id => document.getElementById(id);
 const FLY = new Image(); FLY.src = "/viewer/fly.png";
 const STATE = ["идёт", "ест", "пятится", "в полёте"];
 const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "вкус", looming: "тень", hunger: "голод", walk: "ходьба" };
-const GENE_COLORS = ["#5aa9f0", "#f5b83d", "#4cc38a", "#e5604d", "#b18cf0", "#cfd3dc"];
+const GENE_COLORS = ["#79a9c9", "#ff9f2e", "#93b86a", "#d8604f", "#b98bff", "#ebe4cf"];
+const LAYER_RGB = { fruit: [255, 150, 40], spider: [175, 110, 255], fly: [80, 225, 150] };
+const layers = { fruit: true, spider: true, fly: false, trail: true };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
-let simT = null, playing = true, follow = true, selected = null;
+let simT = null, playing = true, selected = null;
 
+// ---------------- data ----------------
 async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw 0; return r.json(); }
 async function refresh() {
   const runs = (await getJSON("/api/runs").catch(() => [])).filter(r => r.name.startsWith("life_"));
   const sel = $("run");
-  if (sel.options.length !== runs.length) { sel.innerHTML = runs.map(r => `<option>${r.name}</option>`).join(""); if (!run && runs.length) run = runs[runs.length - 1].name; sel.value = run; }
+  if (sel.options.length !== runs.length) {
+    sel.innerHTML = runs.map(r => `<option>${r.name}</option>`).join("");
+    if (!run && runs.length) run = runs.slice().sort((a, b) => (b.time || 0) - (a.time || 0))[0].name;
+    sel.value = run;
+  }
   if (!run) return;
   if (!meta) meta = await getJSON(`/results/${run}/meta.json`).catch(() => null);
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
-  // opening a long run: start from the last ~5 minutes instead of the very beginning
-  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
+  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);   // start from the last ~5 min
   while (status && chunkLoaded + 1 < status.chunks) {
     const c = await getJSON(`/results/${run}/chunks/chunk_${String(chunkLoaded + 1).padStart(5, "0")}.json`).catch(() => null);
     if (!c) break; frames.push(...c.frames); chunkLoaded++;
-    if (frames.length > 20 * 60 * 10) frames.splice(0, frames.length - 20 * 60 * 10);   // keep ~10 min in memory
+    if (frames.length > 20 * 60 * 10) frames.splice(0, frames.length - 20 * 60 * 10);
   }
   const r = await fetch(`/results/${run}/events.jsonl`); if (r.ok) events = (await r.text()).split("\n").filter(Boolean).map(JSON.parse);
-  if (status) $("status").textContent = `симуляция: ${fmt(status.sim_s)} · скорость ${status.speed}× реального · живы ${status.alive} · яиц ${status.eggs ?? 0} · родилось ${status.births ?? 0}` + (Date.now() / 1000 - status.time > 60 ? " · остановлена" : "");
+  if (status) {
+    const stopped = Date.now() / 1000 - status.time > 120;
+    const chip = (v, label) => `<div class="reading"><b>${v}</b> <span>${label}</span></div>`;
+    $("status").innerHTML = chip(status.alive, "живых") + chip(status.eggs ?? 0, "яиц") + chip(status.births ?? 0, "родилось") +
+      chip(fmt(status.sim_s), "мирового времени") + chip(`${status.speed}×`, stopped ? "остановлена" : "скорость расчёта");
+  }
   if (simT == null && frames.length) simT = frames[0].t;
   drawPop();
 }
-function drawPop() {
-  const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 160;
-  cv2.width = W * dpr; cv2.height = H * dpr; const c = cv2.getContext("2d"); c.scale(dpr, dpr);
-  if (!frames.length) return;
-  const step = Math.max(1, Math.floor(frames.length / W));
-  const pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
-  const maxN = Math.max(8, ...pts.map(f => f.flies.length));
-  const X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
-  c.strokeStyle = "#252a33"; c.fillStyle = "#8a91a3"; c.font = "11px system-ui";
-  for (const v of [0.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 20); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
-  c.fillStyle = "rgba(255,255,255,.08)";
-  pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 20); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
-  (meta?.genes || []).forEach((gname, gi) => {
-    c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath();
-    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + (q[10] ? q[10][gi] : 1), 0) / f.flies.length;
-      const y = H - 10 - Math.min(2, m) / 2 * (H - 20); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
-    c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 12);
-  });
-  c.fillStyle = "#8a91a3"; c.fillText(`серые столбики — число мух (макс ${maxN})`, W - 230, 12);
-}
 $("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; };
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-
 $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; };
-$("live").onclick = () => { follow = true; $("live").classList.add("on"); if (frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 2); };
+$("live").onclick = () => { if (frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 2); };
+document.querySelectorAll(".layer").forEach(b => b.onclick = () => { layers[b.dataset.layer] = !layers[b.dataset.layer]; b.classList.toggle("on"); odorKey = ""; });
 
 function frameAt(t) {
-  if (!frames.length) return null;
+  if (!frames.length || t == null) return null;
   const dt = frames.length > 1 ? frames[1].t - frames[0].t : 0.05;
-  const i = Math.max(0, Math.min(frames.length - 1, Math.floor((t - frames[0].t) / dt)));
-  return [frames[i], frames[Math.min(i + 1, frames.length - 1)], ((t - frames[0].t) / dt) - i];
+  const x = (t - frames[0].t) / dt, i = Math.max(0, Math.min(frames.length - 1, Math.floor(x)));
+  return [frames[i], frames[Math.min(i + 1, frames.length - 1)], Math.max(0, Math.min(1, x - i)), i];
 }
 
+// ---------------- odor model (same formulas as flysim/life/arena.py) ----------------
+function odorAt(f, name, x, y) {
+  const s2 = 2 * meta.arena.odor_sigma ** 2;
+  if (name === "spider") { const [sx, sy] = meta.arena.spider; return Math.exp(-((x - sx) ** 2 + (y - sy) ** 2) / s2); }
+  if (name === "fly") { let c = 0; for (const q of f.flies) c += Math.exp(-((x - q[1]) ** 2 + (y - q[2]) ** 2) / (2 * 36)); return c; }
+  let c = 0; for (const [fx, fy, sugar] of f.food) if (sugar > 0) c += Math.min(1, sugar / 50) * Math.exp(-((x - fx) ** 2 + (y - fy) ** 2) / s2);
+  return c;
+}
+const ODOR_RES = 110;
+const odorCanvas = document.createElement("canvas"); odorCanvas.width = odorCanvas.height = ODOR_RES;
+let odorKey = "", odorAge = 0;
+function renderOdor(f) {
+  const key = `${layers.fruit}${layers.spider}${layers.fly}`;
+  if (key === odorKey && performance.now() - odorAge < 120) return;
+  odorKey = key; odorAge = performance.now();
+  const ctx = odorCanvas.getContext("2d"), img = ctx.createImageData(ODOR_RES, ODOR_RES), d = img.data, S = meta.arena.size / ODOR_RES;
+  const names = ["fruit", "spider", "fly"].filter(n => layers[n]);
+  for (let j = 0; j < ODOR_RES; j++) for (let i = 0; i < ODOR_RES; i++) {
+    const x = (i + 0.5) * S, y = (j + 0.5) * S; let r = 0, g = 0, b = 0, a = 0;
+    for (const n of names) {
+      const c = Math.min(1, odorAt(f, n, x, y));
+      if (c < 0.03) continue;
+      const band = Math.ceil(c * 7) / 7;                       // stepped bands read as isolines
+      const edge = (c * 7) % 1 < 0.12 ? 0.25 : 0;              // thin brighter line at each band edge
+      const alpha = Math.min(0.75, 0.1 + band * 0.45 + edge);
+      const [cr, cg, cb] = LAYER_RGB[n];
+      r = r * (1 - alpha) + cr * alpha; g = g * (1 - alpha) + cg * alpha; b = b * (1 - alpha) + cb * alpha; a = 1 - (1 - a) * (1 - alpha);
+    }
+    const k = (j * ODOR_RES + i) * 4;
+    d[k] = a ? r / a : 0; d[k + 1] = a ? g / a : 0; d[k + 2] = a ? b / a : 0; d[k + 3] = a * 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ---------------- sprites (drawn once, then stamped) ----------------
+function sprite(size, draw) { const c = document.createElement("canvas"); c.width = c.height = size; draw(c.getContext("2d"), size); return c; }
+const GROUND = sprite(512, (c, s) => {
+  const rnd = (i => () => (i = (i * 16807) % 2147483647) / 2147483647)(7);
+  c.fillStyle = "#6f6446"; c.fillRect(0, 0, s, s);
+  for (let k = 0; k < 2200; k++) {
+    const x = rnd() * s, y = rnd() * s, r = 0.5 + rnd() * 2.5, v = rnd();
+    c.fillStyle = v < 0.5 ? `rgba(40,32,20,${0.08 + rnd() * 0.12})` : `rgba(200,185,140,${0.05 + rnd() * 0.1})`;
+    c.beginPath(); c.ellipse(x, y, r, r * (0.5 + rnd()), rnd() * 3, 0, 7); c.fill();
+  }
+  for (let k = 0; k < 40; k++) {   // dry leaf fragments
+    const x = rnd() * s, y = rnd() * s, len = 6 + rnd() * 14;
+    c.save(); c.translate(x, y); c.rotate(rnd() * 6.28);
+    c.fillStyle = `rgba(${120 + rnd() * 40},${90 + rnd() * 30},${40 + rnd() * 20},0.35)`;
+    c.beginPath(); c.ellipse(0, 0, len, len * 0.35, 0, 0, 7); c.fill();
+    c.strokeStyle = "rgba(60,45,20,.3)"; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke(); c.restore();
+  }
+});
+const FRUIT = sprite(128, (c, s) => {
+  const m = s / 2;
+  c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(m + 6, m + 10, 44, 34, 0, 0, 7); c.fill();
+  const body = c.createRadialGradient(m - 14, m - 16, 6, m, m, 48);
+  body.addColorStop(0, "#ffd27a"); body.addColorStop(0.35, "#ff9a2e"); body.addColorStop(1, "#b8480f");
+  c.fillStyle = body; c.beginPath(); c.ellipse(m, m, 44, 40, 0, 0, 7); c.fill();
+  c.fillStyle = "rgba(255,240,200,.55)"; c.beginPath(); c.ellipse(m - 16, m - 18, 12, 7, -0.6, 0, 7); c.fill();
+  c.fillStyle = "rgba(120,40,10,.35)";
+  for (let k = 0; k < 16; k++) { const a = k * 2.4, r = 10 + (k * 7) % 30; c.beginPath(); c.arc(m + Math.cos(a) * r, m + Math.sin(a) * r * 0.9, 1.5, 0, 7); c.fill(); }
+  c.strokeStyle = "#5a3a1a"; c.lineWidth = 4; c.beginPath(); c.moveTo(m, m - 36); c.quadraticCurveTo(m + 4, m - 50, m + 10, m - 54); c.stroke();
+  c.fillStyle = "#5fae3c"; c.beginPath(); c.ellipse(m + 18, m - 50, 14, 6, -0.5, 0, 7); c.fill();
+  c.fillStyle = "rgba(255,235,150,.7)"; c.beginPath(); c.ellipse(m + 26, m + 20, 7, 11, 0.3, 0, 7); c.fill();   // sugary juice
+});
+const EGG = sprite(48, (c, s) => {
+  const g = c.createLinearGradient(12, 10, 36, 38); g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#d9d2bd");
+  c.translate(24, 24); c.rotate(0.6);
+  c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(3, 3, 8, 17, 0, 0, 7); c.fill();
+  c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, 8, 17, 0, 0, 7); c.fill();
+  c.strokeStyle = "rgba(255,255,255,.9)"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(-2, -14); c.lineTo(-5, -26); c.moveTo(2, -14); c.lineTo(5, -26); c.stroke();   // dorsal filaments
+});
+function drawSpider(c, x, y, size, t) {
+  c.save(); c.translate(x, y);
+  c.strokeStyle = "#1a1410"; c.lineCap = "round";
+  for (let side of [-1, 1]) for (let k = 0; k < 4; k++) {
+    const base = (k - 1.5) * 0.42, wig = Math.sin(t * 3 + k * 1.7 + side) * 0.06;
+    const a1 = side * (Math.PI / 2) + side * (base + wig), knee = size * 0.55, foot = size * 0.95;
+    const kx = Math.cos(a1 - side * 0.35) * knee, ky = Math.sin(a1 - side * 0.35) * knee;
+    const fx = Math.cos(a1 + side * 0.25) * foot, fy = Math.sin(a1 + side * 0.25) * foot;
+    c.lineWidth = size * 0.07; c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(kx, ky - size * 0.25, fx, fy); c.stroke();
+  }
+  const g = c.createRadialGradient(-size * .08, size * .1, 2, 0, size * .15, size * .35);
+  g.addColorStop(0, "#5b4636"); g.addColorStop(1, "#1d1611");
+  c.fillStyle = g; c.beginPath(); c.ellipse(0, size * 0.18, size * 0.28, size * 0.33, 0, 0, 7); c.fill();
+  c.fillStyle = "#2a201a"; c.beginPath(); c.ellipse(0, -size * 0.16, size * 0.18, size * 0.17, 0, 0, 7); c.fill();
+  c.fillStyle = "#c9a36a"; c.beginPath(); c.ellipse(0, size * 0.2, size * 0.07, size * 0.14, 0, 0, 7); c.fill();   // mark
+  c.fillStyle = "#e8433a"; for (const ex of [-1, 1]) { c.beginPath(); c.arc(ex * size * 0.06, -size * 0.25, size * 0.03, 0, 7); c.fill(); }
+  c.restore();
+}
+function drawBird(c, x, y, scale, angle, alpha) {
+  c.save(); c.translate(x, y); c.rotate(angle); c.globalAlpha = alpha;
+  c.filter = `blur(${Math.max(1, 6 - scale * 0.1)}px)`;
+  c.fillStyle = "#000";
+  c.beginPath();
+  c.moveTo(scale * 0.6, 0);                                       // beak
+  c.quadraticCurveTo(scale * 0.2, -scale * 0.12, 0, -scale * 0.1);
+  c.quadraticCurveTo(-scale * 0.25, -scale * 1.1, -scale * 0.55, -scale * 1.2);   // left wing
+  c.quadraticCurveTo(-scale * 0.35, -scale * 0.3, -scale * 0.55, -scale * 0.08);
+  c.lineTo(-scale * 0.9, -scale * 0.2); c.lineTo(-scale * 0.8, 0); c.lineTo(-scale * 0.9, scale * 0.2);   // tail
+  c.lineTo(-scale * 0.55, scale * 0.08);
+  c.quadraticCurveTo(-scale * 0.35, scale * 0.3, -scale * 0.55, scale * 1.2);     // right wing
+  c.quadraticCurveTo(-scale * 0.25, scale * 1.1, 0, scale * 0.1);
+  c.quadraticCurveTo(scale * 0.2, scale * 0.12, scale * 0.6, 0);
+  c.fill(); c.restore();
+}
+
+// ---------------- deaths and flight ----------------
+const CORPSE_S = 60;
+const DEATH_ICON = { death_bird: "🦅", death_spider: "🕸️", death_starved: "🍂", death_old: "⌛" };
+const DEATH_RU = { death_bird: "птица", death_spider: "паук", death_starved: "голод", death_old: "старость" };
+const lastSeen = new Map();   // fly id -> {x, y, h, t}
+function corpses(t) {
+  const out = [];
+  for (const e of events) {
+    if (!e.kind.startsWith("death_") || e.t > t || t - e.t > CORPSE_S) continue;
+    let pos = lastSeen.get(e.fly);
+    if (!pos) {   // find the fly in the frames just before its death
+      for (let i = frames.length - 1; i >= 0; i--) {
+        if (frames[i].t > e.t) continue;
+        const q = frames[i].flies.find(z => z[0] === e.fly);
+        if (q) { pos = { x: q[1], y: q[2], h: q[3] }; lastSeen.set(e.fly, pos); break; }
+        if (e.t - frames[i].t > 2) break;
+      }
+    }
+    if (pos) out.push({ ...pos, t: e.t, kind: e.kind });
+  }
+  return out;
+}
+const FLIGHT_FRAMES = 3;   // a takeoff hop lasts 0.15 s = 3 frames of 50 ms
+function altitude(id, fi, k) {
+  const flyingAt = i => { const fr = frames[i]; const q = fr && fr.flies.find(z => z[0] === id); return q && q[4] === 3; };
+  if (!flyingAt(fi) && !flyingAt(fi + 1)) return 0;
+  let start = fi; while (start > 0 && fi - start < 6 && flyingAt(start - 1)) start--;
+  const phase = Math.min(1, (fi + k - start + (flyingAt(fi) ? 0 : 1)) / FLIGHT_FRAMES);
+  return Math.sin(Math.PI * Math.min(1, Math.max(0, phase)));
+}
+
+// ---------------- arena ----------------
 const cv = $("arena");
-let last = performance.now();
+let last = performance.now(), trail = [];
 function draw(now = performance.now()) {
   const dtw = (now - last) / 1000; last = now;
-  if (frames.length && simT != null && playing) {
-    simT += dtw * +$("speed").value;
-    const end = frames[frames.length - 1].t;
-    if (simT > end) simT = end;   // caught up with the simulation: wait for new chunks
-  }
+  if (frames.length && simT != null && playing) simT = Math.min(simT + dtw * +$("speed").value, frames[frames.length - 1].t);
   const W = cv.clientWidth, H = W, dpr = devicePixelRatio || 1;
-  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; }
+  if (cv.width !== Math.round(W * dpr)) { cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; }
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const got = meta && frameAt(simT);
-  if (!got) { c.fillStyle = "#101318"; c.fillRect(0, 0, W, H); c.fillStyle = "#8a91a3"; c.fillText("жду данные симуляции…", 20, 30); requestAnimationFrame(draw); return; }
-  const [f, g, k] = got, S = W / meta.arena.size, P = v => v * S;
-  // ground with day/night
-  const L = f.light;
-  c.fillStyle = `rgb(${Math.round(30 + 150 * L)},${Math.round(34 + 130 * L)},${Math.round(30 + 90 * L)})`; c.fillRect(0, 0, W, H);
-  // odor plumes and food
-  for (const [x, y, sugar] of f.food) {
-    const grad = c.createRadialGradient(P(x), P(y), 0, P(x), P(y), P(meta.arena.odor_sigma * 1.5));
-    grad.addColorStop(0, `rgba(255,170,60,${0.25 * Math.min(1, sugar / 50)})`); grad.addColorStop(1, "rgba(255,170,60,0)");
-    c.fillStyle = grad; c.beginPath(); c.arc(P(x), P(y), P(meta.arena.odor_sigma * 1.5), 0, 7); c.fill();
-    c.fillStyle = "#f0a030"; c.beginPath(); c.arc(P(x), P(y), P(4) * Math.max(0.3, Math.min(1, sugar / 400)), 0, 7); c.fill();
-  }
+  if (!got) { c.fillStyle = "#1d251b"; c.fillRect(0, 0, W, H); c.fillStyle = "#a39f8a"; c.font = "16px 'Alegreya Sans', sans-serif"; c.fillText("Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
+  const [f, g, k, fi] = got, S = W / meta.arena.size, P = v => v * S, L = f.light;
+
+  // ground
+  c.drawImage(GROUND, 0, 0, W, H);
+  // odors
+  renderOdor(f);
+  c.imageSmoothingEnabled = true; c.drawImage(odorCanvas, 0, 0, W, H);
+
+  // spider web + spider
   const [sx, sy, sr] = meta.arena.spider;
-  c.strokeStyle = "rgba(230,230,230,.35)"; c.lineWidth = 1;
-  for (let r = sr / 4; r <= sr; r += sr / 4) { c.beginPath(); c.arc(P(sx), P(sy), P(r), 0, 7); c.stroke(); }
-  for (let a = 0; a < 8; a++) { c.beginPath(); c.moveTo(P(sx), P(sy)); c.lineTo(P(sx + sr * Math.cos(a * Math.PI / 4)), P(sy + sr * Math.sin(a * Math.PI / 4))); c.stroke(); }
-  c.font = `${P(8)}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🕷️", P(sx), P(sy));
+  c.strokeStyle = "rgba(245,245,245,.55)"; c.lineWidth = 0.8;
+  for (let a = 0; a < 12; a++) { c.beginPath(); c.moveTo(P(sx), P(sy)); c.lineTo(P(sx + sr * 1.15 * Math.cos(a * Math.PI / 6)), P(sy + sr * 1.15 * Math.sin(a * Math.PI / 6))); c.stroke(); }
+  for (let r = sr / 5; r <= sr * 1.05; r += sr / 5) {
+    c.beginPath();
+    for (let a = 0; a <= 12; a++) { const ang = a * Math.PI / 6, rr = r * (0.94 + 0.06 * Math.cos(a * 2.3)); const px = P(sx + rr * Math.cos(ang)), py = P(sy + rr * Math.sin(ang)); a ? c.lineTo(px, py) : c.moveTo(px, py); }
+    c.stroke();
+  }
+  drawSpider(c, P(sx), P(sy), P(9), now / 1000);
+
+  // food
+  for (const [x, y, sugar] of f.food) {
+    const s = P(9) * (0.55 + 0.45 * Math.min(1, sugar / 400));
+    c.drawImage(FRUIT, P(x) - s, P(y) - s, s * 2, s * 2);
+  }
   // eggs
   for (const [x, y, p] of f.eggs || []) {
-    c.fillStyle = "#fffbe8"; c.strokeStyle = "rgba(0,0,0,.4)"; c.lineWidth = 1;
-    c.beginPath(); c.ellipse(P(x), P(y), P(1.2 + 0.4 * p), P(0.8 + 0.3 * p), 0.6, 0, 7); c.fill(); c.stroke();
+    const s = P(2.2) * (1 + 0.15 * Math.sin(now / 300 + x)) * (p > 0.85 ? 1.1 : 1);
+    c.drawImage(EGG, P(x) - s, P(y) - s, s * 2, s * 2);
   }
-  // flies (interpolated)
+  // selected fly trail
+  if (layers.trail && selected != null) {
+    const pts = []; for (let i = Math.max(0, fi - 20 * 30); i <= fi; i += 2) { const q = frames[i].flies.find(z => z[0] === selected); if (q) pts.push(q); }
+    if (pts.length > 1) {
+      c.lineCap = "round"; c.lineJoin = "round";
+      for (let i = 1; i < pts.length; i++) {
+        c.strokeStyle = `rgba(245,184,61,${0.15 + 0.6 * i / pts.length})`; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(P(pts[i - 1][1]), P(pts[i - 1][2])); c.lineTo(P(pts[i][1]), P(pts[i][2])); c.stroke();
+      }
+    }
+  }
+  // corpses: last known position of flies that died recently
+  for (const d of corpses(f.t)) {
+    const fade = Math.max(0, 1 - (f.t - d.t) / CORPSE_S), size = P(5.5);
+    c.save(); c.globalAlpha = 0.35 + 0.55 * fade; c.translate(P(d.x), P(d.y)); c.rotate(d.h + Math.PI / 2 + 0.4);
+    c.filter = "grayscale(1) brightness(.55)"; c.scale(1, -1);                 // lying on its back
+    if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size);
+    c.restore();
+    c.globalAlpha = 0.5 + 0.5 * fade; c.font = `${Math.max(11, P(4))}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(DEATH_ICON[d.kind] || "✝", P(d.x) + size * 0.6, P(d.y) - size * 0.6); c.globalAlpha = 1;
+  }
+  // flies
   const next = new Map(g.flies.map(q => [q[0], q]));
   for (const q of f.flies) {
     const n = next.get(q[0]) || q, lerp = (a, b) => a + (b - a) * k;
     const x = lerp(q[1], n[1]), y = lerp(q[2], n[2]);
     let dh = n[3] - q[3]; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-    const h = q[3] + dh * k, size = P(q[4] === 3 ? 7 : 5.5);
+    const h = q[3] + dh * k;
+    // altitude: flights are short ballistic hops; estimate the phase from consecutive flying frames
+    const alt = altitude(q[0], fi, k);                                          // 0..1
+    const size = P(5.5) * (1 + 0.45 * alt);
+    const off = P(0.6) + P(9) * alt;                                            // shadow drifts away with height
+    c.save(); c.filter = alt > 0.05 ? `blur(${1 + 3 * alt}px)` : "none";
+    c.fillStyle = `rgba(0,0,0,${0.32 - 0.18 * alt})`; c.beginPath();
+    c.ellipse(P(x) + off, P(y) + off, size * (0.28 - 0.06 * alt), size * (0.36 - 0.08 * alt), h + Math.PI / 2, 0, 7); c.fill(); c.restore();
+    if (alt > 0.05) {   // dashed line from fly to its shadow shows height
+      c.strokeStyle = `rgba(255,255,255,${0.5 * alt})`; c.setLineDash([2, 3]); c.lineWidth = 1;
+      c.beginPath(); c.moveTo(P(x), P(y)); c.lineTo(P(x) + off, P(y) + off); c.stroke(); c.setLineDash([]);
+    }
     c.save(); c.translate(P(x), P(y)); c.rotate(h + Math.PI / 2);
     if (FLY.complete) c.drawImage(FLY, -size / 2, -size / 2, size, size);
     c.restore();
-    if (q[0] === selected) { c.strokeStyle = "#f5b83d"; c.lineWidth = 2; c.beginPath(); c.arc(P(x), P(y), size * 0.9, 0, 7); c.stroke(); }
-    if (q[4] === 1) { c.fillStyle = "#4cc38a"; c.beginPath(); c.arc(P(x) + size * .5, P(y) - size * .5, 3, 0, 7); c.fill(); }
+    // age ring: fills over an adult life (60 min), green -> red
+    const life = Math.min(1, q[6] / 3600), hue = 120 - 120 * life;
+    c.strokeStyle = `hsla(${hue},80%,55%,.85)`; c.lineWidth = Math.max(1.5, P(0.5));
+    c.beginPath(); c.arc(P(x), P(y), size * 0.62, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.max(0.03, life)); c.stroke();
+    if (q[6] < 30) {   // newborn sparkle
+      c.fillStyle = `rgba(255,255,220,${0.9 - q[6] / 35})`;
+      for (let s = 0; s < 4; s++) { const a = now / 400 + s * 1.57; c.beginPath(); c.arc(P(x) + Math.cos(a) * size * .8, P(y) + Math.sin(a) * size * .8, 1.6, 0, 7); c.fill(); }
+    }
+    if (q[0] === selected) { c.strokeStyle = "#f5b83d"; c.lineWidth = 2; c.beginPath(); c.arc(P(x), P(y), size * 0.85, 0, 7); c.stroke(); }
+    if (q[4] === 1) { c.font = `${Math.max(10, P(3))}px system-ui`; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🍯", P(x) + size * .6, P(y) - size * .5); }
+    if (q[5] < 0.15) { c.fillStyle = "#ff6b5b"; c.beginPath(); c.arc(P(x) - size * .55, P(y) - size * .55, 2.5, 0, 7); c.fill(); }
   }
-  // bird shadows
+  // birds diving
   for (const [target, p, dir] of f.shadows) {
     const q = f.flies.find(z => z[0] === target); if (!q) continue;
-    const dist = (1 - Math.min(1, p)) * 60, x = q[1] + Math.cos(dir) * dist, y = q[2] + Math.sin(dir) * dist;
-    c.fillStyle = `rgba(0,0,0,${0.15 + 0.35 * Math.min(1, p)})`; c.beginPath(); c.arc(P(x), P(y), P(4 + 22 * Math.min(1, p)), 0, 7); c.fill();
+    const pp = Math.min(1, p), dist = (1 - pp) * 70, x = q[1] + Math.cos(dir) * dist, y = q[2] + Math.sin(dir) * dist;
+    drawBird(c, P(x), P(y), P(6 + 26 * pp), dir + Math.PI, 0.2 + 0.45 * pp);
   }
-  if (L < 0.35) { c.fillStyle = `rgba(5,10,30,${0.5 - L})`; c.fillRect(0, 0, W, H); }
+  // day/night
+  if (L < 0.9) { c.fillStyle = `rgba(10,18,45,${Math.max(0, 0.62 - L * 0.7)})`; c.fillRect(0, 0, W, H); }
   const lag = status ? status.sim_s - simT : 0;
-  $("clock").textContent = `время мира ${fmt(f.t)} · ${L > 0.5 ? "☀️ день" : L > 0.3 ? "🌇 сумерки" : "🌙 ночь"} · мух ${f.flies.length}` + (lag > 5 ? ` · отстаём от симуляции на ${fmt(lag)}` : "");
+  $("clock").textContent = `${L > 0.55 ? "☀️ День" : L > 0.3 ? "🌇 Сумерки" : "🌙 Ночь"}, ${fmt(f.t)} мирового времени` + (lag > 5 ? `, прямой эфир впереди на ${fmt(lag)}` : "");
   panel(f);
   requestAnimationFrame(draw);
 }
@@ -192,23 +434,65 @@ cv.onclick = e => {
   for (const q of got[0].flies) { const d = Math.hypot(q[1] - x, q[2] - y); if (d < bd) { bd = d; best = q[0]; } }
   selected = bd < 10 ? best : null; renderDiary();
 };
+
+// ---------------- fly panel ----------------
+let panelAge = 0;
 function panel(f) {
-  if (selected == null) return;
+  if (selected == null || performance.now() - panelAge < 100) return;
+  panelAge = performance.now();
   const q = f.flies.find(z => z[0] === selected);
-  if (!q) { $("flyTitle").textContent = `Муха №${selected}`; $("flyInfo").textContent = "погибла"; $("flyBars").innerHTML = ""; return; }
   $("flyTitle").textContent = `Муха №${selected}`;
+  if (!q) {
+    const death = events.find(e => e.fly === selected && e.kind.startsWith("death_"));
+    $("flyInfo").innerHTML = death ? `${DEATH_ICON[death.kind]} погибла в ${fmt(death.t)} — ${DEATH_RU[death.kind]}` : "нет в кадре";
+    $("flyBars").innerHTML = ""; $("nose").innerHTML = ""; return;
+  }
   const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname] || gname} ×${q[10][i]}`).join(", ");
-  $("flyInfo").innerHTML = `возраст <b>${fmt(q[6])}</b> · сейчас <b>${STATE[q[4]]}</b> · поколение <b>${q[8]}</b>` +
-    (q[9] >= 0 ? ` · мать №${q[9]}` : "") + `<br><span class="note">гены: ${genes}</span>`;
+  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b></div><div>Поколение <b>${q[8]}</b>${q[9] >= 0 ? `, мать №${q[9]}` : ", из первых мух"}</div>` +
+    `<div class="note" style="margin-top:4px">Гены: ${genes}</div>`;
+  // what the antennae smell (same geometry as the simulation)
+  const h = q[3], ant = side => [q[1] + 1.2 * Math.cos(h) - side * 0.8 * Math.sin(h), q[2] + 1.2 * Math.sin(h) + side * 0.8 * Math.cos(h)];
+  const [lx, ly] = ant(1), [rx, ry] = ant(-1);
+  const others = { ...f, flies: f.flies.filter(z => z[0] !== selected) };
+  const row = (name, label, color) => {
+    const a = Math.min(1, odorAt(others, name, lx, ly)), b = Math.min(1, odorAt(others, name, rx, ry));
+    const cell = v => `<div class="track"><div class="fill" style="width:${v * 100}%;background:${color}"></div></div>`;
+    return `<span>${label}</span>${cell(a)}${cell(b)}`;
+  };
+  $("nose").innerHTML = `<div class="nose"><span class="h">запах</span><span class="h">левый усик</span><span class="h">правый усик</span>
+    ${row("fruit", "еда", "var(--fruit)")}${row("spider", "паук", "var(--spider)")}${row("fly", "мухи", "var(--fly)")}</div>`;
   const names = meta.readout, vals = q[7];
-  const rows = [["энергия", q[5], 1, "var(--good)", (q[5] * 100).toFixed(0) + "%"],
-    ...names.map((n, i) => [n, vals[i], 150, n.startsWith("GF") ? "var(--bad)" : n === "MN9" ? "var(--accent)" : "var(--blue)", vals[i] + " Гц"])];
+  const rows = [["энергия", q[5], 1, "var(--moss)", (q[5] * 100).toFixed(0) + "%"],
+    ...names.map((n, i) => [n, vals[i], 150, n.startsWith("GF") ? "var(--blood)" : n === "MN9" ? "#c98a1d" : "#4f7f9f", vals[i] + " Гц"])];
   $("flyBars").innerHTML = rows.map(([n, v, max, col, label]) => `<div class="bar"><span>${n}</span><div class="track"><div class="fill" style="width:${Math.min(100, v / max * 100)}%;background:${col}"></div></div><span class="dim">${label}</span></div>`).join("");
 }
 function renderDiary() {
   const list = selected == null ? events.slice(-40) : events.filter(e => e.fly === selected);
   $("diary").innerHTML = list.slice(-60).reverse().map(e => `<li><span class="t">${fmt(e.t)}</span>${selected == null ? `№${e.fly}: ` : ""}${e.text}</li>`).join("") || `<li class="dim">пока ничего</li>`;
 }
+
+// ---------------- population chart ----------------
+function drawPop() {
+  const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 160;
+  cv2.width = W * dpr; cv2.height = H * dpr; const c = cv2.getContext("2d"); c.scale(dpr, dpr);
+  if (!frames.length) return;
+  const step = Math.max(1, Math.floor(frames.length / W));
+  const pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
+  const maxN = Math.max(8, ...pts.map(f => f.flies.length));
+  const X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
+  c.strokeStyle = "#34402f"; c.fillStyle = "#a39f8a"; c.font = "12px 'Alegreya Sans', sans-serif";
+  for (const v of [0.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 20); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
+  c.fillStyle = "rgba(235,228,207,.10)";
+  pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 20); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
+  (meta?.genes || []).forEach((gname, gi) => {
+    c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath();
+    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + (q[10] ? q[10][gi] : 1), 0) / f.flies.length;
+      const y = H - 10 - Math.min(2, m) / 2 * (H - 20); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
+    c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 12);
+  });
+  c.fillStyle = "#a39f8a"; c.fillText(`светлые столбики — число мух, максимум ${maxN}`, W - 250, 12);
+}
+
 setInterval(() => { refresh().then(renderDiary); }, 3000);
 refresh().then(renderDiary); draw();
 </script>
