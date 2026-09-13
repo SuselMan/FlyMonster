@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--max-flies", type=int, default=None, help="brain slots (population cap), default flies + 2")
     ap.add_argument("--minutes", type=float, default=60.0)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--as-fast-as-possible", action="store_true", help="do not hold the simulation to real time")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
@@ -51,6 +52,10 @@ def main():
     for k in range(steps):
         if k % per_second == 0:
             commands_done = life.arena.apply_commands(out / "commands.jsonl", life.t, commands_done)
+            if not args.as_fast_as_possible:
+                ahead = life.t - (time.perf_counter() - t0)    # never run ahead of the wall clock
+                if ahead > 0.05:
+                    time.sleep(ahead)
         life.step()
         if k % FRAME_EVERY == 0:
             frames.append(life.frame())
