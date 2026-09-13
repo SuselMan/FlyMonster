@@ -347,7 +347,7 @@ class Arena:
             Obstacle("litter", W * 0.88, H * 0.40, 20, 28, 0.4),
             Obstacle("litter", W * 0.45, H * 0.12, 30, 14, 0.1),
         ]
-        a.trees = [(W * 0.64, H * 0.24), (W * 0.22, H * 0.56)]
+        a.trees = [(W * 0.70, H * 0.30), (W * 0.22, H * 0.56)]
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
         first = a.add_spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
         a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)

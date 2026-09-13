@@ -929,8 +929,8 @@ function draw(now = performance.now()) {
     const wobble = Math.sin(t * .6 + tx) * .015 + f.wind[0] * .02;
     c.save(); c.translate(sx, sy); c.rotate(wobble);
     if (has(cur)) {
-      c.globalAlpha = .5; c.drawImage(SPR[cur], -rr, -rr, rr * 2, rr * 2);
-      if (sq > .8 && next !== cur && has(next)) { c.globalAlpha = .5 * (sq - .8) / .2; c.drawImage(SPR[next], -rr, -rr, rr * 2, rr * 2); }
+      c.globalAlpha = .6; c.drawImage(SPR[cur], -rr, -rr, rr * 2, rr * 2);
+      if (sq > .8 && next !== cur && has(next)) { c.globalAlpha = .6 * (sq - .8) / .2; c.drawImage(SPR[next], -rr, -rr, rr * 2, rr * 2); }
     } else {
       c.globalAlpha = .35; c.fillStyle = "#2f5a26"; c.beginPath(); c.arc(0, 0, rr * .9, 0, 7); c.fill();
     }
