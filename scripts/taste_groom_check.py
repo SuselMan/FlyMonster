@@ -42,8 +42,9 @@ def main():
     conds = {
         "baseline": {}, "sugar 100": {"sugar": 100}, "sugar 100 + bitter 100": {"sugar": 100, "bitter": 100},
         "sugar 100 + bitter 200": {"sugar": 100, "bitter": 200}, "bitter 150": {"bitter": 150},
-        "water 100": {"water": 100}, "water 200": {"water": 200}, "JON_F 100": {"JON_F": 100}, "JON_F 200": {"JON_F": 200},
-        "JON_CE 100": {"JON_CE": 100}, "bristle L 100": {"bristle": 100}, "wind 0.8 front": {"wind": 0.8},
+        "water 100": {"water": 100}, "water 200": {"water": 200}, "water 300": {"water": 300}, "water 400": {"water": 400}, "JON_F 100": {"JON_F": 100}, "JON_F 200": {"JON_F": 200},
+        "JON_CE 50": {"JON_CE": 50}, "JON_CE 100": {"JON_CE": 100}, "JON_CE 150": {"JON_CE": 150}, "JON_CE 200": {"JON_CE": 200},
+        "sugar 100 + JON_CE 150": {"sugar": 100, "JON_CE": 150}, "bristle L 100": {"bristle": 100}, "wind 0.8 front": {"wind": 0.8},
         "wind 0.8 left": {"wind": 0.8, "rel": np.pi / 2},
     }
     names = list(conds)
