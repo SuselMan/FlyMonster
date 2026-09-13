@@ -69,7 +69,9 @@ connectome and the published LIF model. Around it:
   that died of hunger/age after decomposing. Droppings and bodies reuse the
   "vinegar" odorant (fermenting matter) rather than an invented new receptor
   profile. Food size, odor and taste follow the remaining amount; flies and
-  ants eat it away. The world starts with a few old droppings.
+  ants eat it away. The world starts with a few old droppings. Two apple
+  trees drop apples under their crowns from midsummer to mid-autumn (world
+  rule, so the population can live long enough to reproduce).
 - **Animals**: the spider builds webs where a running heatmap says flies walk
   (or near food), webs weaken with age and when flies tear free; the centipede
   hunts by sight/vibration; both have hunger (hunt only when hungry, slow down

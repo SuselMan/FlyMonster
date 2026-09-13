@@ -209,7 +209,7 @@ class ArenaConfig:
     day_length: float = 600.0
     # seasons and temperature
     year_length: float = 4500.0             # s of world time per year (75 min)
-    year_start: float = 0.15                # year phase at t=0: 0 spring, .25 summer, .5 autumn, .75 winter
+    year_start: float = 0.30                # year phase at t=0: 0 spring, .25 summer, .5 autumn, .75 winter
     temp_mean: float = 13.0                 # deg C
     temp_season_amp: float = 12.0           # midsummer mean + amp, midwinter mean - amp
     temp_day_amp: float = 3.0
@@ -255,9 +255,14 @@ class ArenaConfig:
     max_centipedes: int = 2
     centipede_arrival: float = 1 / 1500.0   # per s, while one is alive and there is room
     centipede_refill: tuple = (60.0, 180.0) # s until a newcomer when none is alive
+    # apple trees: drop apples under the crown from midsummer to mid-autumn
+    tree_crown: float = 45.0                # mm, radius where apples land
+    tree_drop_rate: float = 1 / 100.0       # apples per s per tree while fruiting
+    tree_season: tuple = (0.32, 0.68)       # year phase window
+    tree_apple_sugar: float = 150.0
     # flowers
-    initial_flowers: int = 6
-    max_flowers: int = 10
+    initial_flowers: int = 12
+    max_flowers: int = 18
     nectar_max: float = 30.0
     nectar_refill: float = 0.15             # units/s (empty -> full in ~3 min)
     flower_odor: float = 0.4                # fraction of fruit-odor strength
@@ -265,14 +270,14 @@ class ArenaConfig:
     flower_grow: float = 60.0               # s a seedling needs to open
     seed_chance: float = 0.35               # per pollination
     seed_delay: tuple = (40.0, 90.0)        # s until the seedling sprouts
-    wild_seed_rate: float = 1 / 300.0       # per s, only while fewer than 3 flowers
+    wild_seed_rate: float = 1 / 200.0       # per s, only while fewer than 6 flowers
     pollen_life: float = 900.0              # s pollen stays on a fly
     # ants
-    n_ants: int = 4
+    n_ants: int = 3
     ant_speed: float = 16.0
     ant_carry_speed: float = 11.0
     ant_sense: float = 45.0                 # mm, finds food by smell/sight within this range
-    ant_bite: float = 8.0                   # units carried per trip
+    ant_bite: float = 4.0                   # units carried per trip
     ant_eat_rate: float = 3.0               # units/s while taking a portion
     ant_search: float = 90.0                # s of searching before returning home empty
     ant_nest_rest: float = 6.0
@@ -304,6 +309,7 @@ class Arena:
     pending_droppings: list = field(default_factory=list)   # (t_due, predator object)
     heat: np.ndarray = None
     nest: tuple = (0.0, 0.0)
+    trees: list = field(default_factory=list)          # apple trees (x, y); walkable, drop apples
     nest_food: float = 0.0
     nest_known: int = -1        # food id a returning ant reported
     ants: dict = None
@@ -334,6 +340,7 @@ class Arena:
             Obstacle("litter", W * 0.88, H * 0.40, 20, 28, 0.4),
             Obstacle("litter", W * 0.45, H * 0.12, 30, 14, 0.1),
         ]
+        a.trees = [(W * 0.64, H * 0.24), (W * 0.22, H * 0.56)]
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
         a.spider = Spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
         a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)
@@ -474,11 +481,26 @@ class Arena:
                         return True
         return False
 
-    def drop_fruit(self, t: float, x, y, sugar=None, by_viewer=True):
+    def drop_fruit(self, t: float, x, y, sugar=None, by_viewer=True, text="зритель положил яблоко"):
         f = self.add_food("fruit", t, float(x), float(y), float(sugar or self.cfg.fruit_sugar), by_viewer=by_viewer)
-        self.log.append({"t": round(t, 2), "kind": "fruit_drop", "x": round(f.x), "y": round(f.y),
-                         "text": "зритель положил яблоко"})
+        self.log.append({"t": round(t, 2), "kind": "fruit_drop" if by_viewer else "tree_apple", "x": round(f.x), "y": round(f.y),
+                         "text": text})
         return f
+
+    def _trees(self, t, dt):
+        cfg = self.cfg
+        lo, hi = cfg.tree_season
+        if not lo <= self.year_phase(t) <= hi:
+            return
+        for tx, ty in self.trees:
+            if self.rng.random() < cfg.tree_drop_rate * dt:
+                for _ in range(20):
+                    a, r = self.rng.uniform(0, 2 * np.pi), cfg.tree_crown * np.sqrt(self.rng.random())
+                    x, y = tx + r * np.cos(a), ty + r * np.sin(a)
+                    if 8 < x < cfg.width - 8 and 8 < y < cfg.height - 8 and not self.blocked(x, y, pad=4):
+                        self.drop_fruit(t, x, y, sugar=cfg.tree_apple_sugar * self.rng.uniform(0.7, 1.2), by_viewer=False,
+                                        text="с яблони упало яблоко")
+                        break
 
     def food_arrays(self, t: float) -> dict:
         """Per-step arrays over food items (cached for the step)."""
@@ -678,6 +700,7 @@ class Arena:
             gy = np.clip((np.asarray(flies["y"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[0] - 1)
             np.add.at(self.heat, (gy, gx), dt)
         self._food_update(t, dt)
+        self._trees(t, dt)
         # ponds freeze after a cold spell (< 3 C air) and thaw only above 5 C (ice 0..1.2, frozen at >= 1)
         was = self.frozen
         air = self.air_temperature(t)
@@ -738,7 +761,7 @@ class Arena:
                     f.announced = True
                     self.counters["flowers_grown"] += 1
                     self._event(t, "flower_grown", f.x, f.y, "вырос новый цветок")
-        if n_flowers + len(self.pending_flowers) < 3 and self.air_temperature(t) >= cfg.flower_min_temp \
+        if n_flowers + len(self.pending_flowers) < 6 and self.air_temperature(t) >= cfg.flower_min_temp \
                 and self.rng.random() < cfg.wild_seed_rate * dt:
             x, y = self.free_spot()
             self.add_flower(t, x, y)
@@ -1096,6 +1119,7 @@ class Arena:
         return {"width": self.cfg.width, "height": self.cfg.height, "odor_sigma": self.cfg.odor_sigma,
                 "day_length": self.cfg.day_length, "odor_ref": self.cfg.odor_ref,
                 "obstacles": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.obstacles],
-                "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "max_webs": self.cfg.max_webs,
+                "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "trees": [[round(x, 1), round(y, 1)] for x, y in self.trees],
+                "tree_crown": self.cfg.tree_crown, "max_webs": self.cfg.max_webs,
                 "shelters": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.shelters],
                 "year_length": self.cfg.year_length, "year_start": self.cfg.year_start, "seasons": list(SEASONS)}

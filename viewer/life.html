@@ -149,7 +149,7 @@ const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "в�
 const GENE_COLORS = ["#86b5d1", "#ffb347", "#98bd6c", "#dd6a55", "#a58bff", "#ece5cf"];
 const DEATH_ICON = { death_bird: "🦅", death_spider: "🕷️", death_centipede: "🐛", death_starved: "🍂", death_old: "⌛" };
 const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight: "🪽", escape: "✨", web_stuck: "🕸️", web_free: "💪", web_struggle: "…",
-  fruit_drop: "🍎", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
+  fruit_drop: "🍎", tree_apple: "🍏", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
   web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
   centipede_arrived: "🐛", centipede_died: "💀", ice_on: "🧊", ice_off: "💧", ice_shore: "🧊", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
   pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀", ...DEATH_ICON };
@@ -272,7 +272,7 @@ const PX = 2;
 const SPR = {};
 const SEASON_KEYS = ["spring", "summer", "autumn", "winter"];
 const spritesReady = Promise.all(["grass", "lake", "stone", "apple", "apple_rotten", "spider", "web", "centipede_head", "centipede_body", "centipede_tail", "egg",
-  "grass_spring", "grass_summer", "grass_autumn", "grass_winter", "lake_frozen", "stone_snow", "litter_spring", "litter_summer", "litter_autumn", "litter_winter", "nest", "nest_winter", "flower", "dropping", "dropping_dry", "ant"].map(name => new Promise(res => {
+  "grass_spring", "grass_summer", "grass_autumn", "grass_winter", "lake_frozen", "stone_snow", "litter_spring", "litter_summer", "litter_autumn", "litter_winter", "nest", "nest_winter", "flower", "dropping", "dropping_dry", "ant", "tree_summer", "tree_autumn", "tree_winter"].map(name => new Promise(res => {
   const img = new Image(); img.onload = img.onerror = () => res(); img.src = `/viewer/sprites/${name}.png`; SPR[name] = img;
 })));
 const has = name => SPR[name] && SPR[name].complete && SPR[name].naturalWidth > 0;
@@ -879,6 +879,21 @@ function draw(now = performance.now()) {
         c.fillStyle = `rgba(${col},${.35 + .65 * v})`; c.beginPath(); c.arc(px, py, Math.max(2, z * (.4 + 1.2 * v)), 0, 7); c.fill();
       }
     }
+  }
+  // apple tree crowns above the ground, see-through so the flies under them stay visible
+  const crownSeason = s => s === "winter" ? "tree_winter" : s === "autumn" ? "tree_autumn" : "tree_summer";
+  for (const [tx, ty] of meta.arena.trees || []) {
+    const [sx, sy] = S(tx, ty), rr = (meta.arena.tree_crown || 45) * 1.25 * z;
+    const cur = crownSeason(SEASON_KEYS[si]), next = crownSeason(SEASON_KEYS[(si + 1) % 4]);
+    const wobble = Math.sin(t * .6 + tx) * .015 + f.wind[0] * .02;
+    c.save(); c.translate(sx, sy); c.rotate(wobble);
+    if (has(cur)) {
+      c.globalAlpha = .5; c.drawImage(SPR[cur], -rr, -rr, rr * 2, rr * 2);
+      if (sq > .8 && next !== cur && has(next)) { c.globalAlpha = .5 * (sq - .8) / .2; c.drawImage(SPR[next], -rr, -rr, rr * 2, rr * 2); }
+    } else {
+      c.globalAlpha = .35; c.fillStyle = "#2f5a26"; c.beginPath(); c.arc(0, 0, rr * .9, 0, 7); c.fill();
+    }
+    c.restore(); c.globalAlpha = 1;
   }
   // birds
   for (const [target, p, dir] of f.shadows) {
