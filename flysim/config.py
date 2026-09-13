@@ -4,12 +4,14 @@ Neuron and synapse parameters follow Shiu et al. 2024, Nature
 ("A Drosophila computational brain model reveals sensorimotor processing"),
 https://github.com/philshiu/Drosophila_brain_model
 """
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_RAW = ROOT / "data" / "raw"
-DATA_CACHE = ROOT / "data" / "cache"
+DATA = Path(os.environ.get("FLYSIM_DATA") or ROOT / "data")   # FLYSIM_DATA: share one data dir between checkouts
+DATA_RAW = DATA / "raw"
+DATA_CACHE = DATA / "cache"
 RESULTS = ROOT / "results"
 
 CONNECTIVITY = DATA_RAW / "Connectivity_783.parquet"
