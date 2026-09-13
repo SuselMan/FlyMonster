@@ -12,7 +12,7 @@ class Food:
     x: float
     y: float
     sugar: float            # remaining amount (arbitrary units)
-    radius: float = 4.0
+    radius: float = 6.0
     odor: str = "fruit"
 
     @property
@@ -32,11 +32,13 @@ class Shadow:
 @dataclass
 class ArenaConfig:
     size: float = 160.0
-    n_food: int = 4
-    food_sugar: float = 400.0
+    n_food: int = 6
+    food_sugar: float = 500.0
     odor_sigma: float = 30.0          # mm, width of the odor plume
-    spider: tuple = (140.0, 140.0, 18.0)   # x, y, radius of the spider's corner
-    spider_catch: float = 0.1         # probability per second of being caught inside the web
+    # Web in open ground: in a corner, flies sliding along the walls ended up in it
+    # (16 of the first 17 deaths).
+    spider: tuple = (115.0, 45.0, 14.0)    # x, y, radius of the web
+    spider_catch: float = 0.05        # probability per second of being caught inside the web
     shadow_rate: float = 1 / 25.0     # bird attacks per second on the whole arena (in daylight)
     day_length: float = 600.0         # s of simulated time for a full day/night cycle
     food_regrow: float = 90.0         # s until a depleted patch reappears elsewhere

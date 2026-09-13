@@ -351,7 +351,7 @@ function draw(now = performance.now()) {
 
   // food
   for (const [x, y, sugar] of f.food) {
-    const s = P(9) * (0.55 + 0.45 * Math.min(1, sugar / 400));
+    const s = P(9) * (0.55 + 0.45 * Math.min(1, sugar / 500));
     c.drawImage(FRUIT, P(x) - s, P(y) - s, s * 2, s * 2);
   }
   // eggs

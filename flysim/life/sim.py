@@ -306,7 +306,10 @@ class Life:
         ny = self.y + speed * np.sin(self.heading) * dt
         hit = (nx < 1) | (nx > s - 1) | (ny < 1) | (ny > s - 1)
         self.x, self.y = np.clip(nx, 1, s - 1), np.clip(ny, 1, s - 1)
-        self.heading[hit] += np.pi / 2 * self.rng.choice([-1, 1], hit.sum()) * 0.3
+        # bounce off walls towards the arena instead of sliding along them into corners
+        if hit.any():
+            to_center = np.arctan2(s / 2 - self.y[hit], s / 2 - self.x[hit])
+            self.heading[hit] = to_center + self.rng.uniform(-0.8, 0.8, hit.sum())
 
         for f in self.arena.food:
             here = feeding & (np.hypot(self.x - f.x, self.y - f.y) < f.radius)
@@ -319,7 +322,7 @@ class Life:
         self.last_feed[feeding] = self.t
         # a mature egg is laid on the food the fly chose to feed on
         can_lay = feeding & (self.age > cfg.maturity) & (self.t - self.last_egg > cfg.egg_interval) \
-            & (self.energy > 0.6)
+            & (self.energy > 0.5)
         for i in np.flatnonzero(can_lay):
             self.eggs.append(Egg(float(self.x[i]), float(self.y[i]), self.t, self.ids[i],
                                  int(self.generation[i]) + 1, self.genome[i].copy()))
