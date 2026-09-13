@@ -531,8 +531,22 @@ class Arena:
             "fruit": np.where(flower, np.clip(amount / self.cfg.nectar_max, 0, 1) * self.cfg.flower_odor * ready, s * fresh),
             "vinegar": np.where(flower, 0.0, s * (1 - fresh) * np.where(kind == 0, 1.2, 1.0) * scale),
             "taste": np.clip(amount / np.where(flower, 10.0, 20.0), 0, 1) * ready,
+            # bitter: rotting fruit, droppings and bodies (our assignment; bitter GRNs suppress feeding in the brain)
+            "bitter": np.where(kind == 0, np.clip((0.4 - fresh) / 0.4, 0, 1) * 0.9,
+                               np.where(kind == 1, 0.5, np.where(flower, 0.0, 0.35))) * ready,
         }
         self._food_cache = (key, out)
+        return out
+
+    def in_litter(self, px, py) -> np.ndarray:
+        """1 inside a leaf-litter patch, 0 outside."""
+        px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+        out = np.zeros(px.shape)
+        for o in self.shelters:
+            c, s = np.cos(-o.angle), np.sin(-o.angle)
+            dx, dy = px - o.x, py - o.y
+            r = np.sqrt(((dx * c - dy * s) / o.rx) ** 2 + ((dx * s + dy * c) / o.ry) ** 2)
+            out = np.maximum(out, r < 1)
         return out
 
     def fly_died(self, t, fid, kind, x, y):

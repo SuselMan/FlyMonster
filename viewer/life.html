@@ -161,16 +161,16 @@
 <script>
 const $ = id => document.getElementById(id);
 const FLY = new Image(); FLY.src = "/viewer/fly.png";
-const STATE = ["идёт", "ест", "пятится", "летит", "прилипла к паутине"];
+const STATE = ["идёт", "ест", "пятится", "летит", "прилипла к паутине", "пьёт", "чистит антенны"];
 const GENE_RU = { vision: "зрение", smell: "обоняние", taste: "вкус", looming: "тень", hunger: "голод", walk: "ходьба" };
 const GENE_COLORS = ["#86b5d1", "#ffb347", "#98bd6c", "#dd6a55", "#a58bff", "#ece5cf"];
-const DEATH_ICON = { death_bird: "🦅", death_spider: "🕷️", death_centipede: "🐛", death_starved: "🍂", death_old: "⌛" };
+const DEATH_ICON = { death_bird: "🦅", death_spider: "🕷️", death_centipede: "🐛", death_starved: "🍂", death_old: "⌛", death_thirst: "🏜️" };
 const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight: "🪽", escape: "✨", web_stuck: "🕸️", web_free: "💪", web_struggle: "…",
   fruit_drop: "🍎", tree_apple: "🍏", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
   web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
   centipede_arrived: "🐛", centipede_died: "💀", ice_on: "🧊", ice_off: "💧", ice_shore: "🧊", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
   pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀",
-  user_fly: "🪰", user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
+  user_fly: "🪰", drink: "💧", groom: "🧹", pollen_groomed: "🌼", user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
 const SEASON_RU = { spring: "🌱 Весна", summer: "🌻 Лето", autumn: "🍁 Осень", winter: "❄️ Зима" };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
@@ -1033,11 +1033,17 @@ function panel(f, fi) {
   $("nose").innerHTML = `<div class="nose"><span class="h">запах</span><span class="h">левый усик</span><span class="h">правый усик</span>
     <span>фрукт</span>${cell(sen[0] || 0, "#e89a2a")}${cell(sen[1] || 0, "#e89a2a")}
     <span>уксус</span>${cell(sen[2] || 0, "#9fbf3a")}${cell(sen[3] || 0, "#9fbf3a")}
-    <span>хищник</span>${cell(sen[4] || 0, "#7a61d9")}${cell(sen[4] || 0, "#7a61d9")}</div>`;
-  const names = meta.readout, vals = q[7], show = ["DNa01 L", "DNa01 R", "DNa02 L", "DNa02 R", "GF", "DNp04", "DNp11", "MDN", "MN9", "DNp09"];
+    <span>хищник</span>${cell(sen[4] || 0, "#7a61d9")}${cell(sen[4] || 0, "#7a61d9")}</div>` +
+    (sen.length > 8 ? `<div class="nose"><span class="h">вкус и антенны</span><span class="h"></span><span class="h"></span>
+    <span>сладко</span>${cell(sen[7] || 0, "#e8c02a")}<span></span>
+    <span>горько</span>${cell(sen[8] || 0, "#8a5a9a")}<span></span>
+    <span>вода</span>${cell(sen[9] || 0, "#4a90b8")}<span></span>
+    <span>пыль</span>${cell(sen[10] || 0, "#9a8a6a")}<span></span></div>` : "");
+  const names = meta.readout, vals = q[7], show = ["DNa01 L", "DNa01 R", "DNa02 L", "DNa02 R", "GF", "DNp04", "DNp11", "MDN", "MN9", "aBN1", "DNp09"];
   const rows = [["энергия", q[5], 1, "#6f9a44", `${Math.round(q[5] * 100)}%`],
+    ...(q[16] != null ? [["вода", q[16], 1, "#4a90b8", `${Math.round(q[16] * 100)}%`], ["пыль на усиках", q[17], 1, "#9a8a6a", `${Math.round(q[17] * 100)}%`]] : []),
     ...show.filter(n => names.includes(n)).map(n => { const v = vals[names.indexOf(n)];
-      return [n, v, 150, n === "GF" || n.startsWith("DNp0") && n !== "DNp09" || n === "DNp11" ? "#c24e3a" : n === "MN9" ? "#c98a1d" : "#4f7f9f", `${v} Гц`]; })];
+      return [n, v, 150, n === "GF" || n.startsWith("DNp0") && n !== "DNp09" || n === "DNp11" ? "#c24e3a" : n === "MN9" ? "#c98a1d" : n === "aBN1" ? "#9a8a6a" : "#4f7f9f", `${v} Гц`]; })];
   $("flyBars").innerHTML = rows.map(([n, v, max, col, label]) => `<div class="bar"><span>${n}</span>${cell(v / max, col)}<span class="dim">${label}</span></div>`).join("");
 }
 function caption(fi) {

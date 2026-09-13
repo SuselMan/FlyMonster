@@ -24,6 +24,11 @@ What is connectome and what is ours (see README):
 - Flight metrics (long flights, flying across water) are only counted, they
   do not change how flights are triggered.
 - Hunger lowers the threshold of NPF neurons and raises sugar sensitivity.
+- Taste and grooming use the neuron sets of Shiu et al. 2024: bitter GRNs on
+  rotting food, water GRNs at a pond edge (thirst raises their rate), Johnston's
+  organ JON-CE driven by dust on the antennae; the body drinks with MN9 and grooms
+  (stops, loses dust and pollen) with aBN1. Which food is bitter, how dust
+  accumulates and the thirst gain are ours.
 - Reproduction is clonal; a mature egg is laid while the fly feeds.
 - Mushroom-body learning is not included (scripts/mb_causal_scan.py).
 - The genome holds physiological parameters only.
@@ -46,12 +51,12 @@ READ_TAU = 0.050          # s, readout low-pass
 READOUT = {               # name -> (cell_type, side or None)
     "DNa01 L": ("DNa01", "left"), "DNa01 R": ("DNa01", "right"),
     "DNa02 L": ("DNa02", "left"), "DNa02 R": ("DNa02", "right"),
-    "MDN": ("MDN", None), "GF": ("DNp01", None), "MN9": (None, None),
+    "MDN": ("MDN", None), "GF": ("DNp01", None), "MN9": (None, None), "aBN1": (None, None),
     "DNp02": ("DNp02", None), "DNp04": ("DNp04", None), "DNp11": ("DNp11", None), "DNp09": ("DNp09", None),
 }
 LONG_FLIGHT_MM = 80.0     # a long-mode flight that covered at least this much ground
 GENES = ("vision", "smell", "taste", "looming", "hunger", "walk")
-SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar")
+SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar", "bitter", "water", "dust")
 
 
 @dataclass
@@ -66,7 +71,15 @@ class LifeConfig:
     gf_threshold: float = 60.0    # Hz, giant fiber -> short escape hop
     long_threshold: float = 45.0  # Hz, mean of DNp02/04/11 -> long-mode takeoff
     mdn_threshold: float = 25.0   # Hz, backward walking
-    feed_threshold: float = 15.0  # Hz, MN9 while touching food
+    feed_threshold: float = 15.0  # Hz, MN9 while touching food or water
+    groom_threshold: float = 8.0  # Hz, aBN1 -> start grooming
+    thirst_s: float = 1500.0      # s, full -> dry
+    drink_per_s: float = 0.03     # hydration per s while drinking
+    juice: float = 0.004          # hydration per sugar unit eaten (fruit, nectar)
+    dust_ground: float = 0.002    # dust per s while walking
+    dust_litter: float = 0.015    # dust per s while walking in leaf litter
+    dust_flower: float = 0.05     # dust (pollen) per s while feeding on a flower
+    groom_clean: float = 0.25     # dust removed per s of grooming
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
     web_escape: float = 1.0       # escape force needed to tear free
@@ -79,7 +92,8 @@ class LifeConfig:
     lifespan: tuple = (2700.0, 3600.0)
     maturity: float = 300.0
     egg_interval: float = 120.0
-    egg_energy: float = 0.2
+    egg_energy: float = 0.12
+    egg_min_energy: float = 0.3
     hatch_time: float = 90.0
     mutation: float = 0.12
     physiology: Physiology = DEFAULT
@@ -133,7 +147,7 @@ class Life:
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
                          "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
-                         "meals", "eggs_laid", "flights", "born_t")
+                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -160,12 +174,15 @@ class Life:
             "loom_L": np.flatnonzero(np.isin(ct, ["LC4", "LPLC2"]) & (side == "left")),
             "loom_R": np.flatnonzero(np.isin(ct, ["LC4", "LPLC2"]) & (side == "right")),
             "sugar": np.array(con.indices(i for i in neurons.SUGAR_GRN if i in con.index_of)),
+            "bitter": np.array(con.indices(i for i in neurons.BITTER_GRN if i in con.index_of)),
+            "water": np.array(con.indices(i for i in neurons.WATER_GRN if i in con.index_of)),
+            "jon_ce": np.array(con.indices(i for i in neurons.JON_CE if i in con.index_of)),
             "touch_L": np.flatnonzero((sub == "head bristle") & (side == "left")),
             "touch_R": np.flatnonzero((sub == "head bristle") & (side == "right")),
         }
         self.group_names = list(groups)
         self.group_gene = {"vis_L": "vision", "vis_R": "vision", "loom_L": "looming", "loom_R": "looming",
-                           "sugar": "taste", "touch_L": None, "touch_R": None}
+                           "sugar": "taste", "bitter": "taste", "water": "taste", "jon_ce": None, "touch_L": None, "touch_R": None}
         idx, col = [], []
         for g, name in enumerate(self.group_names):
             idx.extend(groups[name].tolist())
@@ -174,7 +191,7 @@ class Life:
         self.sense_col = torch.tensor(col, device=self.dev)
         read_idx, read_row = [], []
         for r, (name, (t, s)) in enumerate(READOUT.items()):
-            sel = [con.index_of[neurons.MN9]] if name == "MN9" else \
+            sel = [con.index_of[neurons.MN9]] if name == "MN9" else [con.index_of[neurons.ABN1]] if name == "aBN1" else \
                 np.flatnonzero((ct == t) & ((side == s) if s else True)).tolist()
             read_idx.extend(sel)
             read_row.extend([r] * len(sel))
@@ -194,7 +211,7 @@ class Life:
         new.update({"x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
                     "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "jumped_at": np.full(n, -1e9),
                     "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
-                    "parent": parents, "born_t": np.full(n, self.t), "genome": genomes, "senses": np.zeros((n, len(SENSES)))})
+                    "parent": parents, "born_t": np.full(n, self.t), "hydration": np.ones(n), "genome": genomes, "senses": np.zeros((n, len(SENSES)))})
         for c in self._columns:
             setattr(self, c, np.concatenate([getattr(self, c), new[c]]))
         self.read = {k: np.concatenate([v, np.zeros(n)]) for k, v in self.read.items()}
@@ -344,6 +361,16 @@ class Life:
         best = np.where(on, fa["taste"][None], 0).max(1) if len(fa["x"]) else np.zeros(B)
         sugar = 150 * (0.5 + np.clip(1 - self.energy, 0, 1)) * best
         drive[gi["sugar"]] = sugar
+        bitter = 200 * (np.where(on, fa["bitter"][None], 0).max(1) if len(fa["x"]) else np.zeros(B))
+        drive[gi["bitter"]] = bitter
+        # water at a pond edge (not through ice), stronger when thirsty; dust on the antennae
+        water = 150 + 250 * np.clip(1 - self.hydration, 0, 1)
+        at_water = self._at_water()
+        drive[gi["water"]] = np.where(at_water, water, 0)
+        drive[gi["jon_ce"]] = 200 * np.clip(self.dust, 0, 1) * (self.state != 3)
+        self.senses[:, 8] = bitter / 200
+        self.senses[:, 9] = at_water * water / 400
+        self.senses[:, 10] = np.clip(self.dust, 0, 1)
         # touch: head bristles pressing against a wall, stone or water edge
         drive[gi["touch_L"], (self.touch_left > 0) & (self.state != 3)] = 100
         drive[gi["touch_R"], (self.touch_left < 0) & (self.state != 3)] = 100
@@ -354,6 +381,14 @@ class Life:
         self.senses[:, 6] = self.touch_left != 0
         self.senses[:, 7] = sugar / 150
         return torch.from_numpy(drive).to(self.dev)[self.sense_col]
+
+    def _at_water(self) -> np.ndarray:
+        """Walking fly whose head reaches open water (a pond edge)."""
+        ar = self.arena
+        if ar.frozen or not len(self.ids):
+            return np.zeros(len(self.ids), dtype=bool)
+        hx, hy = self.x + 2.0 * np.cos(self.heading), self.y + 2.0 * np.sin(self.heading)
+        return ar.in_water(hx, hy) & (self.air_left <= 0) & (self.stuck == 0)
 
     def _touching_food(self, fa) -> np.ndarray:
         """(flies, food) contact: the fly's head is over an edible item."""
@@ -408,6 +443,16 @@ class Life:
         stuck = self.stuck > 0
         feeding = on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck
         backward = (r["MDN"] > cfg.mdn_threshold) & ~airborne & ~stuck
+        drinking = self._at_water() & ~on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck
+        busy = feeding | drinking | airborne | stuck
+        was_grooming = self.grooming > 0
+        self.grooming = np.where(busy, 0, np.where(self.grooming > 0, self.dust > 0.08,
+                                                   r["aBN1"] > cfg.groom_threshold)).astype(float)
+        grooming = self.grooming > 0
+        for i in np.flatnonzero(grooming & (self.state != 6)):
+            self._event(i, "groom", "чистит антенны (JON-CE → aBN1)")
+        for i in np.flatnonzero(drinking & (self.state != 5)):
+            self._event(i, "drink", "пьёт воду (водяные рецепторы → MN9)")
         self.cooldown = np.maximum(self.cooldown - dt, 0)
         ready = (self.cooldown <= 0) & ~airborne
         long_drive = (r["DNp02"] + r["DNp04"] + r["DNp11"]) / 3
@@ -449,7 +494,7 @@ class Life:
 
         walk = cfg.walk_speed * self.genome[:, GENES.index("walk")]
         speed = walk * (0.35 + 0.65 * light)
-        speed[feeding | stuck] = 0
+        speed[feeding | stuck | drinking | grooming] = 0
         speed[backward] = -0.5 * walk[backward]
         speed[airborne] = self.air_speed[airborne]
         walking = ~airborne & ~stuck
@@ -534,7 +579,7 @@ class Life:
         for i in np.flatnonzero(feeding & (self.t - self.last_feed > 3.0)):
             self._event(i, "feed", "ест (MN9 → хоботок)")
         self.last_feed[feeding] = self.t
-        can_lay = feeding & (self.age > cfg.maturity) & (self.t - self.last_egg > cfg.egg_interval) & (self.energy > 0.5)
+        can_lay = feeding & (self.age > cfg.maturity) & (self.t - self.last_egg > cfg.egg_interval) & (self.energy > cfg.egg_min_energy)
         for i in np.flatnonzero(can_lay):
             self.eggs.append(Egg(float(self.x[i]), float(self.y[i]), self.t, self.ids[i],
                                  int(self.generation[i]) + 1, self.genome[i].copy()))
@@ -542,8 +587,24 @@ class Life:
             self.last_egg[i] = self.t
             self.eggs_laid[i] += 1
             self._event(i, "egg", "отложила яйцо")
-        # 0 walk, 1 feed, 2 backward, 3 airborne, 4 stuck in web
-        self.state = np.where(airborne, 3, np.where(self.stuck > 0, 4, np.where(feeding, 1, np.where(backward, 2, 0))))
+        # thirst, drinking, juice from food; dust from the ground, litter and flowers; grooming cleans it (and the pollen)
+        self.hydration -= dt / cfg.thirst_s
+        self.hydration[drinking] += cfg.drink_per_s * dt
+        walking_now = ~airborne & ~stuck & (np.abs(speed) > 0)
+        self.dust += dt * walking_now * np.where(ar.in_litter(self.x, self.y) > 0, cfg.dust_litter, cfg.dust_ground)
+        if feeding.any() and len(fa["x"]):
+            self.hydration[eaters] += cfg.juice * cfg.sugar_per_s * dt * share[which[eaters]]
+            self.dust[on_flower] += cfg.dust_flower * dt
+        self.dust[grooming] -= cfg.groom_clean * dt
+        self.dust = np.clip(self.dust, 0, 1)
+        cleaned = was_grooming & ~grooming & (self.pollen > 0) & (self.rng.random(len(self.ids)) < 0.5)   # a bout ends
+        for i in np.flatnonzero(cleaned):
+            self._event(i, "pollen_groomed", "счистила пыльцу")
+        self.pollen[cleaned] = 0
+        self.hydration = np.clip(self.hydration, 0, 1)
+        # 0 walk, 1 feed, 2 backward, 3 airborne, 4 stuck in web, 5 drink, 6 groom
+        self.state = np.where(airborne, 3, np.where(self.stuck > 0, 4, np.where(feeding, 1, np.where(drinking, 5,
+                              np.where(grooming, 6, np.where(backward, 2, 0))))))
 
         self.energy -= cfg.metabolism * dt + cfg.move_cost * np.abs(speed) * dt * (~airborne)
         self.energy = np.clip(self.energy, 0, 1)
@@ -559,6 +620,8 @@ class Life:
                     self._kill(i, "bird", "поймана птицей")
         for i in np.flatnonzero(self.energy <= 0):
             self._kill(i, "starved", "умерла от голода")
+        for i in np.flatnonzero(self.hydration <= 0):
+            self._kill(i, "thirst", "умерла от жажды")
         for i in np.flatnonzero(self.age >= self.lifespan):
             self._kill(i, "old", "умерла от старости")
         self._remove_dead()
@@ -615,7 +678,7 @@ class Life:
             self._event(i, "death_" + kind, text)
             self.events[-1].update({   # obituary facts for the viewer
                 "age": round(float(self.age[i]), 1), "generation": int(self.generation[i]), "parent": int(self.parent[i]),
-                "energy": round(float(self.energy[i]), 2), "meals": round(float(self.meals[i]), 1),
+                "energy": round(float(self.energy[i]), 2), "hydration": round(float(self.hydration[i]), 2), "meals": round(float(self.meals[i]), 1),
                 "eggs": int(self.eggs_laid[i]), "flights": int(self.flights[i]),
                 "since_meal": round(float(self.t - self.last_feed[i]), 1) if self.last_feed[i] > -1e8 else None,
                 "genome": [round(float(v), 2) for v in self.genome[i]]})
@@ -681,6 +744,7 @@ class Life:
                        [int(self.read[k][i]) for k in READOUT], int(self.generation[i]), int(self.parent[i]),
                        [round(float(v), 2) for v in self.genome[i]], round(float(alt[i]), 2),
                        [round(float(v), 2) for v in self.senses[i]], round(float(self.escape_force[i]), 2),
-                       int(self.pollen[i] > 0), round(float(temp[i]), 1)]
+                       int(self.pollen[i] > 0), round(float(temp[i]), 1), round(float(self.hydration[i]), 3),
+                       round(float(self.dust[i]), 2)]
                       for i, fid in enumerate(self.ids)],
         }

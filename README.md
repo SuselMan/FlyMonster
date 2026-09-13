@@ -67,6 +67,11 @@ connectome and the published LIF model. Around it:
   circle). Scan (`scripts/wind_scan.py`): several DN pairs encode wind side, but DNa01/DNa02 do not
   follow it and odor does not gate it.
 - **Hunger** lowers the threshold of NPF neurons and raises sugar sensitivity.
+- **Taste, drinking, grooming** use the neuron sets of Shiu et al. 2024 (checked under our physiology by
+  `scripts/taste_groom_check.py`: sugar 100 Hz -> MN9 47 Hz, + bitter 200 Hz -> 3 Hz; water 300/400 Hz -> MN9
+  32/53 Hz; JON-CE 100/150/200 Hz -> aBN1 10/27/47 Hz). Rotting fruit, droppings and bodies taste bitter; water
+  GRNs fire at a pond edge, faster when thirsty (150-400 Hz); dust from walking, leaf litter and flowers drives
+  JON-CE; the body drinks with MN9 and grooms with aBN1 (stops, cleans dust, may lose pollen). Thirst can kill.
 - **One female fly's wiring**: every fly has the same connectome.
 - **The world is scripted** (`life/arena.py`), the flies are not: nothing in
   the world tells a fly where to go. Food has causes and is finite: apples only
