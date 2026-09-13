@@ -3,3 +3,4 @@ __pycache__/
 data/
 results/
 node_modules/
+.claude/
