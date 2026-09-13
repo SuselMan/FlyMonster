@@ -272,7 +272,7 @@ const PX = 2;
 const SPR = {};
 const SEASON_KEYS = ["spring", "summer", "autumn", "winter"];
 const spritesReady = Promise.all(["grass", "lake", "stone", "apple", "apple_rotten", "spider", "web", "centipede_head", "centipede_body", "centipede_tail", "egg",
-  "grass_spring", "grass_summer", "grass_autumn", "grass_winter", "lake_frozen", "stone_snow", "litter_spring", "litter_summer", "litter_autumn", "litter_winter", "nest", "nest_winter"].map(name => new Promise(res => {
+  "grass_spring", "grass_summer", "grass_autumn", "grass_winter", "lake_frozen", "stone_snow", "litter_spring", "litter_summer", "litter_autumn", "litter_winter", "nest", "nest_winter", "flower", "dropping", "dropping_dry", "ant"].map(name => new Promise(res => {
   const img = new Image(); img.onload = img.onerror = () => res(); img.src = `/viewer/sprites/${name}.png`; SPR[name] = img;
 })));
 const has = name => SPR[name] && SPR[name].complete && SPR[name].naturalWidth > 0;
@@ -493,6 +493,13 @@ function drawWeb(c, sx, sy, r, strength, build, z, id, t) {
   if (build < 1) { c.strokeStyle = "rgba(255,255,240,.5)"; c.setLineDash([2, 4]); c.lineWidth = 1; c.beginPath(); c.arc(sx, sy, r * z, 0, 6.283 * build); c.stroke(); c.setLineDash([]); }
 }
 function drawDropping(c, sx, sy, frac, decay, z, id) {
+  if (has("dropping")) {                          // sprite: shrinks as eaten, dries lighter
+    const w = z * 5.5 * (0.5 + 0.5 * Math.sqrt(frac));
+    c.save(); c.translate(sx, sy); c.rotate(id * 1.3);
+    c.drawImage(SPR.dropping, -w / 2, -w / 2, w, w);
+    if (decay > 0 && has("dropping_dry")) { c.globalAlpha = Math.min(1, decay); c.drawImage(SPR.dropping_dry, -w / 2, -w / 2, w, w); }
+    c.restore(); return;
+  }
   // small brown blobs; they dry lighter and shrink as eaten
   const r = z * 2.2 * (0.5 + 0.5 * Math.sqrt(frac)), dry = decay;
   c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(sx + r * .2, sy + r * .3, r * 1.2, r * .8, 0, 0, 7); c.fill();
@@ -524,6 +531,29 @@ function drawCarcass(c, sx, sy, frac, ready, decay, z, id, size) {
   }
   c.restore();
 }
+// white-petal flower sprite recoloured per hue (12 buckets) and wither stage (4), cached
+const flowerCache = {};
+function flowerTint(hue, wither) {
+  const hb = Math.round(((hue % 360) + 360) % 360 / 30) % 12, wb = Math.min(3, Math.round(wither * 3)), key = hb * 4 + wb;
+  if (flowerCache[key]) return flowerCache[key];
+  const img = SPR.flower, cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  const c = cv.getContext("2d"); c.drawImage(img, 0, 0);
+  const d = c.getImageData(0, 0, cv.width, cv.height), p = d.data, h = hb * 30 / 360, sat = .7 * (1 - wb / 3.4), dim = 1 - .35 * wb / 3;
+  const hsl2rgb = (h, s, l) => { const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return [f(0), f(8), f(4)]; };
+  for (let i = 0; i < p.length; i += 4) {
+    if (!p[i + 3]) continue;
+    const r = p[i] / 255, g = p[i + 1] / 255, b = p[i + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    if (mx - mn < .16 && l > .45) {                 // petal (white/grey)
+      const [R, G, B] = hsl2rgb(h + wb * .02, sat, Math.min(.9, l * .82) * dim);
+      p[i] = R * 255; p[i + 1] = G * 255; p[i + 2] = B * 255;
+    } else if (wb) {                                // leaves and centre brown as it withers
+      const k = wb / 3 * .6, grey = (r + g + b) / 3;
+      p[i] = (r * (1 - k) + (grey * 1.1) * k) * 255 * dim; p[i + 1] = (g * (1 - k) + grey * .85 * k) * 255 * dim; p[i + 2] = (b * (1 - k) + grey * .55 * k) * 255 * dim;
+    }
+  }
+  c.putImageData(d, 0, 0);
+  return (flowerCache[key] = cv);
+}
 function drawFlower(c, sx, sy, nectar, grown, wither, hue, z, id, t) {
   if (grown < 1) {   // seedling: a sprout with two leaves growing up
     const g = Math.max(.15, grown), L = 5 * z * g;
@@ -534,6 +564,16 @@ function drawFlower(c, sx, sy, nectar, grown, wither, hue, z, id, t) {
     return;
   }
   const R = 4.2 * z * (1 - 0.35 * wither * wither), sat = 75 - 55 * wither, light = 65 - 20 * wither;
+  if (has("flower")) {
+    const img = flowerTint(hue, wither), w = R * 2.6;
+    c.fillStyle = "rgba(0,0,0,.22)"; c.beginPath(); c.arc(sx + R * .2, sy + R * .25, R * 1.05, 0, 7); c.fill();
+    c.save(); c.translate(sx, sy); c.rotate(id * .7 + Math.sin(t * .8 + id) * .04);
+    c.drawImage(img, -w / 2, -w / 2, w, w);
+    c.restore();
+    const fill = Math.min(1, nectar / 30);          // nectar: a glint in the centre
+    c.fillStyle = `rgba(255,235,120,${.5 * fill})`; c.beginPath(); c.arc(sx, sy, R * .22, 0, 7); c.fill();
+    return;
+  }
   c.fillStyle = "rgba(0,0,0,.22)"; c.beginPath(); c.arc(sx + R * .2, sy + R * .25, R * 1.05, 0, 7); c.fill();
   c.fillStyle = "#4f8a33"; for (const s of [-1, 1]) { c.beginPath(); c.ellipse(sx + s * R * .9, sy + R * .5, R * .6, R * .22, s * .6, 0, 7); c.fill(); }
   c.save(); c.translate(sx, sy); c.rotate(id * .7 + Math.sin(t * .8 + id) * .04);
@@ -543,7 +583,25 @@ function drawFlower(c, sx, sy, nectar, grown, wither, hue, z, id, t) {
   const fill = Math.min(1, nectar / 30);
   c.fillStyle = `rgba(255,${Math.round(190 + 40 * fill)},60,${.6 + .4 * fill})`; c.beginPath(); c.arc(sx, sy, R * (.18 + .17 * fill), 0, 7); c.fill();
 }
+// ants drawn about as large as the (already enlarged) flies, with a pale outline so they read on dark soil
+let antOutlined = null;
+function antSprite() {
+  if (antOutlined) return antOutlined;
+  const img = SPR.ant, pad = 6, cv = document.createElement("canvas"); cv.width = img.naturalWidth + pad * 2; cv.height = img.naturalHeight + pad * 2;
+  const c = cv.getContext("2d");
+  for (let a = 0; a < 16; a++) c.drawImage(img, pad + Math.cos(a / 16 * 6.283) * 3, pad + Math.sin(a / 16 * 6.283) * 3);
+  c.globalCompositeOperation = "source-in"; c.fillStyle = "rgba(245,230,190,.85)"; c.fillRect(0, 0, cv.width, cv.height);
+  c.globalCompositeOperation = "source-over"; c.drawImage(img, pad, pad);
+  return (antOutlined = cv);
+}
 function drawAnt(c, sx, sy, heading, z, t, carrying, moving) {
+  if (has("ant")) {
+    const img = antSprite(), L = 5.5 * z, w = L * img.width / img.height, wob = moving ? Math.sin(t * 30 + sx) * .06 : 0;
+    c.save(); c.translate(sx, sy); c.rotate(heading + Math.PI / 2 + wob);
+    c.drawImage(img, -w / 2, -L / 2, w, L);
+    if (carrying) { c.fillStyle = "#e9c46a"; c.strokeStyle = "#5a3d12"; c.lineWidth = 1; c.beginPath(); c.arc(0, -L * .55, L * .16, 0, 7); c.fill(); c.stroke(); }
+    c.restore(); return;
+  }
   const s = z * 1.1;
   c.save(); c.translate(sx, sy); c.rotate(heading);
   c.strokeStyle = "#1b120c"; c.lineWidth = Math.max(.8, s * .22);
