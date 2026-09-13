@@ -115,7 +115,7 @@ function toPx(i, W, H) { return [8 + X[i] * (W - 16), 8 + Y[i] * (W - 16)]; }
 function drawBase() {
   const [W, H] = size(), dpr = devicePixelRatio || 1;
   base = document.createElement("canvas"); base.width = W * dpr; base.height = H * dpr;
-  const c = base.getContext("2d"); c.scale(dpr, dpr); c.globalAlpha = 0.22;
+  const c = base.getContext("2d"); c.scale(dpr, dpr); c.globalAlpha = 0.38;
   for (let i = 0; i < meta.n; i++) {
     if (X[i] < 0) continue; const [x, y] = toPx(i, W, H);
     c.fillStyle = CLASS_COLORS[meta.classes[CLS[i]]] || "#777"; c.fillRect(x, y, 1, 1);
@@ -187,9 +187,16 @@ function draw(now = performance.now()) {
   if (sim) {
     const k = Math.min(frames.length - 1, Math.floor(t));
     c.globalCompositeOperation = "lighter";
-    for (let back = 5; back >= 0; back--) {
+    if (t >= frames.length) {
+      // finished: every neuron that fired, brighter the more it fired
+      for (let i = 0; i < meta.n; i++) {
+        const n = sim.count[i]; if (!n || X[i] < 0) continue;
+        const [x, y] = toPx(i, W, H); c.globalAlpha = Math.min(1, 0.25 + n / 20);
+        c.fillStyle = CLASS_COLORS[meta.classes[CLS[i]]] || "#fff"; c.fillRect(x - 1.5, y - 1.5, 3, 3);
+      }
+    } else for (let back = 5; back >= 0; back--) {
       const f = frames[k - back]; if (!f) continue;
-      const alpha = back === 0 ? 1 : 0.5 / back, r = back === 0 ? 2.2 : 1.6;
+      const alpha = back === 0 ? 1 : 0.5 / back, r = back === 0 ? 3.5 : 2.5;
       c.globalAlpha = alpha;
       for (const i of f) { if (X[i] < 0) continue; const [x, y] = toPx(i, W, H); c.fillStyle = CLASS_COLORS[meta.classes[CLS[i]]] || "#fff"; c.fillRect(x - r / 2, y - r / 2, r, r); }
     }
