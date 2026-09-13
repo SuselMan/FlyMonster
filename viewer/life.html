@@ -63,6 +63,11 @@
   #feed { list-style:none; padding:0; margin:0; max-height:360px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
   #feed li { padding:3px 0 3px 12px; cursor:pointer; } #feed li:hover { background:rgba(236,229,207,.05); }
   #feed .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
+  .obit { margin-top:22px; } .obit-wrap { overflow-x:auto; max-height:320px; overflow-y:auto; }
+  #obit { border-collapse:collapse; width:100%; font-size:14px; }
+  #obit th { text-align:left; font-weight:500; color:var(--faded); padding:4px 10px 4px 0; position:sticky; top:0; background:var(--night); }
+  #obit td { padding:4px 10px 4px 0; border-top:1px solid rgba(236,229,207,.08); white-space:nowrap; }
+  #obit tr[data-i] { cursor:pointer; } #obit tr[data-i]:hover td { background:rgba(236,229,207,.05); }
   .census { margin-top:22px; } #pop { display:block; width:100%; }
   @media (max-width:1100px) { .station { grid-template-columns:1fr; } .masthead nav { margin-left:0; } #mini { width:150px; height:100px; } }
 </style>
@@ -140,6 +145,11 @@
       <ul id="feed"></ul>
     </div>
   </aside>
+  <section class="obit" style="grid-column:1/-1">
+    <h3>Некролог</h3>
+    <div class="obit-wrap"><table id="obit"></table></div>
+    <p class="note">Клик по строке — перемотка к последним секундам мухи. Причину пишет мир: птица, паук, сороконожка, голод, старость.</p>
+  </section>
   <section class="census" style="grid-column:1/-1">
     <h3>Перепись: сколько мух и как меняются их гены</h3>
     <canvas id="pop" height="170"></canvas>
@@ -200,9 +210,9 @@ async function refresh() {
         chip(status.counters.pollinations ?? 0, "опылений") : "");
   }
   if (simT == null && frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 3);
-  renderFeed(); drawPop();
+  renderFeed(); renderObit(); drawPop();
 }
-$("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; };
+$("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; obitKey = ""; };
 function frameAt(t) {
   if (!frames.length || t == null) return null;
   const dt = frames.length > 1 ? frames[1].t - frames[0].t : 0.05;
@@ -1069,6 +1079,29 @@ function renderFeed() {
   $("feed").querySelectorAll("li[data-i]").forEach(li => li.onclick = () => {
     const e = list[+li.dataset.i]; if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 5); camera.clamp(); }
     if (e.fly >= 0) selected = e.fly; if (simT != null && e.t < simT && frames.length && e.t >= frames[0].t) simT = e.t - 2;
+  });
+}
+
+// ============ obituary ============
+let obitKey = "";
+function renderObit() {
+  const tNow = simT ?? 0;
+  const deaths = events.filter(e => e.kind.startsWith("death_") && e.t <= tNow + 0.1).reverse();
+  const key = run + ":" + deaths.length + ":" + Math.floor(tNow);
+  if (key === obitKey) return; obitKey = key;
+  const kids = {}; for (const e of events) if (e.kind === "born" && e.t <= tNow + 0.1) kids[e.parent] = (kids[e.parent] || 0) + 1;
+  const dash = v => v == null ? "—" : v;
+  $("obit").innerHTML = `<tr><th>Муха</th><th>Причина</th><th>Когда</th><th>Прожила</th><th>Поколение</th><th>Мать</th><th>Съела</th><th>Без еды</th><th>Яиц</th><th>Дочерей</th><th>Взлётов</th></tr>` +
+    (deaths.map((e, i) => `<tr data-i="${i}"><td>№${e.fly}</td><td>${DEATH_ICON[e.kind] || "✝"} ${e.text}</td><td>${fmt(e.t)}</td>` +
+      `<td>${e.age != null ? fmt(e.age) : "—"}</td><td>${dash(e.generation)}</td><td>${e.parent == null ? "—" : e.parent >= 0 ? "№" + e.parent : "первая"}</td>` +
+      `<td>${e.meals != null ? Math.round(e.meals) : "—"}</td><td>${e.since_meal != null ? fmt(e.since_meal) : e.meals === 0 ? "ни разу не ела" : "—"}</td>` +
+      `<td>${dash(e.eggs)}</td><td>${kids[e.fly] || 0}</td><td>${dash(e.flights)}</td></tr>`).join("") ||
+     `<tr><td colspan="11" class="dim">Пока все живы.</td></tr>`);
+  $("obit").querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = () => {
+    const e = deaths[+tr.dataset.i]; selected = e.fly;
+    if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 6); camera.clamp(); }
+    if (frames.length && e.t - 6 >= frames[0].t) simT = e.t - 6;
+    view.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 }
 

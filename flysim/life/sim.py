@@ -132,7 +132,8 @@ class Life:
         self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "air_left", "air_total", "air_speed",
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
-                         "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t")
+                         "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
+                         "meals", "eggs_laid", "flights", "born_t")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -193,7 +194,7 @@ class Life:
         new.update({"x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
                     "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "jumped_at": np.full(n, -1e9),
                     "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
-                    "parent": parents, "genome": genomes, "senses": np.zeros((n, len(SENSES)))})
+                    "parent": parents, "born_t": np.full(n, self.t), "genome": genomes, "senses": np.zeros((n, len(SENSES)))})
         for c in self._columns:
             setattr(self, c, np.concatenate([getattr(self, c), new[c]]))
         self.read = {k: np.concatenate([v, np.zeros(n)]) for k, v in self.read.items()}
@@ -432,6 +433,7 @@ class Life:
         for i in np.flatnonzero(hop | fly_long):
             dur, spd = cfg.hop if hop[i] else cfg.flight
             self.air_left[i] = self.air_total[i] = dur
+            self.flights[i] += 1
             self.air_speed[i] = spd
             self.air_height[i] = 0.4 if hop[i] else 1.0
             self.cooldown[i] = dur + 0.8
@@ -515,6 +517,7 @@ class Life:
             for k in np.flatnonzero(got > 0):
                 ar.food[k].amount -= got[k]
             self.energy[eaters] += cfg.sugar_per_s * dt * share[which[eaters]] * cfg.energy_per_sugar
+            self.meals[eaters] += cfg.sugar_per_s * dt * share[which[eaters]]
             self.counters["eaten"] += float(got.sum())
             # pollen sticks to a fly feeding on a flower; the next different flower gets pollinated
             on_flower = eaters[fa["kind"][which[eaters]] == 4]
@@ -537,6 +540,7 @@ class Life:
                                  int(self.generation[i]) + 1, self.genome[i].copy()))
             self.energy[i] -= cfg.egg_energy
             self.last_egg[i] = self.t
+            self.eggs_laid[i] += 1
             self._event(i, "egg", "отложила яйцо")
         # 0 walk, 1 feed, 2 backward, 3 airborne, 4 stuck in web
         self.state = np.where(airborne, 3, np.where(self.stuck > 0, 4, np.where(feeding, 1, np.where(backward, 2, 0))))
@@ -609,6 +613,12 @@ class Life:
     def _kill(self, i: int, kind: str, text: str):
         if self.ids[i] not in {d for d, _ in self.dead}:
             self._event(i, "death_" + kind, text)
+            self.events[-1].update({   # obituary facts for the viewer
+                "age": round(float(self.age[i]), 1), "generation": int(self.generation[i]), "parent": int(self.parent[i]),
+                "energy": round(float(self.energy[i]), 2), "meals": round(float(self.meals[i]), 1),
+                "eggs": int(self.eggs_laid[i]), "flights": int(self.flights[i]),
+                "since_meal": round(float(self.t - self.last_feed[i]), 1) if self.last_feed[i] > -1e8 else None,
+                "genome": [round(float(v), 2) for v in self.genome[i]]})
             self.dead.append((self.ids[i], kind))
             self.arena.fly_died(self.t, self.ids[i], kind, float(self.x[i]), float(self.y[i]))
 
