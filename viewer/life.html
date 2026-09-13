@@ -62,6 +62,14 @@
   h3 { font-family:Alegreya, Georgia, serif; font-weight:500; font-style:italic; font-size:20px; margin:0 0 6px; }
   #feed { list-style:none; padding:0; margin:0; max-height:360px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
   #feed li { padding:3px 0 3px 12px; cursor:pointer; } #feed li:hover { background:rgba(236,229,207,.05); }
+  .tabs { display:flex; gap:6px; margin:0 0 8px; }
+  .tab { font-family:Alegreya, Georgia, serif; font-style:italic; font-size:18px; padding:2px 14px; }
+  #flylist { list-style:none; padding:0; margin:0; max-height:360px; overflow:auto; font-size:14px; border-left:2px solid var(--rim); }
+  #flylist li { padding:4px 0 4px 12px; cursor:pointer; display:grid; grid-template-columns:44px 1fr 56px 56px; gap:8px; align-items:center; }
+  #flylist li:hover { background:rgba(236,229,207,.05); } #flylist li.sel { background:rgba(236,229,207,.1); }
+  #flylist li.dead { color:var(--faded); } #flylist .mini { height:5px; background:#34402f; border-radius:3px; overflow:hidden; }
+  #flylist .mini i { display:block; height:100%; }
+  #flylist .sub { color:var(--faded); font-size:12px; }
   #feed .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
   .obit { margin-top:22px; } .obit-wrap { overflow-x:auto; max-height:320px; overflow-y:auto; }
   #obit { border-collapse:collapse; width:100%; font-size:14px; }
@@ -141,8 +149,12 @@
       <div id="flyBars"></div>
     </div>
     <div>
-      <h3>Что происходит в мире</h3>
-      <ul id="feed"></ul>
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab on" data-tab="feed" aria-selected="true">События</button>
+        <button role="tab" class="tab" data-tab="flies" aria-selected="false">Мухи</button>
+      </div>
+      <ul id="feed" role="tabpanel"></ul>
+      <ul id="flylist" role="tabpanel" hidden></ul>
     </div>
   </aside>
   <section class="obit" style="grid-column:1/-1">
@@ -967,6 +979,7 @@ function draw(now = performance.now()) {
     (lag > 5 ? `; прямой эфир впереди на ${fmt(lag)}` : "");
   drawMini(f);
   panel(f, fi);
+  renderFlyList(f);
   drawnOnce = true;
   requestAnimationFrame(draw);
 }
@@ -1072,6 +1085,38 @@ function caption(fi) {
   }
   const dedup = items.filter((x, i) => x !== items[i - 1]).slice(-7);
   return dedup.map(x => `<span>${x}</span>`).join(` <span class="arrow">→</span> `);
+}
+
+// ============ tabs and fly list ============
+let tab = "feed", flyListAt = 0;
+for (const b of document.querySelectorAll("button.tab")) b.onclick = () => {
+  tab = b.dataset.tab;
+  for (const x of document.querySelectorAll("button.tab")) { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", on); }
+  $("feed").hidden = tab !== "feed"; $("flylist").hidden = tab !== "flies";
+  flyListAt = 0;
+};
+function renderFlyList(f) {
+  if (tab !== "flies" || performance.now() - flyListAt < 500) return; flyListAt = performance.now();
+  const bar = (v, col) => `<div class="mini"><i style="width:${Math.round(Math.min(1, Math.max(0, v)) * 100)}%;background:${col}"></i></div>`;
+  const alive = [...f.flies].sort((a, b) => a[0] - b[0]);
+  const deaths = events.filter(e => e.kind.startsWith("death_") && e.t <= f.t + 0.1).reverse();
+  const rowsAlive = alive.map(q => `<li data-fly="${q[0]}" class="${q[0] === selected ? "sel" : ""}"><b>№${q[0]}</b>` +
+    `<span>${STATE[q[4]] || ""}<div class="sub">${fmt(q[6])}, поколение ${q[8]}</div></span>${bar(q[5], "#6f9a44")}${q[16] != null ? bar(q[16], "#4a90b8") : "<span></span>"}</li>`).join("");
+  const rowsDead = deaths.map(e => `<li data-dead="${e.fly}" class="dead ${e.fly === selected ? "sel" : ""}"><b>№${e.fly}</b>` +
+    `<span>${DEATH_ICON[e.kind] || "✝"} ${e.text}<div class="sub">${fmt(e.t)}</div></span><span></span><span></span></li>`).join("");
+  $("flylist").innerHTML = (rowsAlive ? `<li class="sub" style="cursor:default;display:block">живые · энергия · вода</li>${rowsAlive}` : `<li class="dim" style="display:block">Живых мух нет — выпустите новую кнопкой «Муху».</li>`) +
+    (rowsDead ? `<li class="sub" style="cursor:default;display:block">погибшие</li>${rowsDead}` : "");
+  $("flylist").querySelectorAll("li[data-fly]").forEach(li => li.onclick = () => {
+    selected = +li.dataset.fly; const q = frameAt(simT)?.[0].flies.find(z => z[0] === selected);
+    if (q) { camera.cx = q[1]; camera.cy = q[2]; camera.z = Math.max(camera.z, 6); camera.clamp(); }
+    follow = true; $("follow").classList.add("on"); flyListAt = 0; renderFeed();
+  });
+  $("flylist").querySelectorAll("li[data-dead]").forEach(li => li.onclick = () => {
+    const e = deaths.find(d => d.fly === +li.dataset.dead); selected = e.fly; follow = false; $("follow").classList.remove("on");
+    if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 6); camera.clamp(); }
+    if (frames.length && e.t - 6 >= frames[0].t) simT = e.t - 6;
+    flyListAt = 0; renderFeed();
+  });
 }
 
 // ============ feed ============
