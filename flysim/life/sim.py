@@ -277,12 +277,12 @@ class Life:
         cfg, ar, B = self.cfg, self.arena, len(self.ids)
         drive = np.zeros((len(self.group_names), B), dtype=np.float32)
         gi = {n: i for i, n in enumerate(self.group_names)}
-        s, cs, fa, ants = ar.spider, ar.centipedes, ar.food_arrays(self.t), ar.ants
-        # vision: flies, food and flowers, stones, spider, centipedes, ants as objects in each hemifield
+        sps, cs, fa, ants = ar.spiders, ar.centipedes, ar.food_arrays(self.t), ar.ants
+        # vision: flies, food and flowers, stones, spiders, centipedes, ants as objects in each hemifield
         stones = [o for o in ar.obstacles if o.kind == "stone"]
-        ox = np.concatenate([self.x, fa["x"], [o.x for o in stones], [s.x], [c.x for c in cs], ants["x"]])
-        oy = np.concatenate([self.y, fa["y"], [o.y for o in stones], [s.y], [c.y for c in cs], ants["y"]])
-        osize = np.concatenate([np.full(B, 1.5), fa["r"], [o.rx for o in stones], [4.0], [10.0 * c.size for c in cs],
+        ox = np.concatenate([self.x, fa["x"], [o.x for o in stones], [s.x for s in sps], [c.x for c in cs], ants["x"]])
+        oy = np.concatenate([self.y, fa["y"], [o.y for o in stones], [s.y for s in sps], [c.y for c in cs], ants["y"]])
+        osize = np.concatenate([np.full(B, 1.5), fa["r"], [o.rx for o in stones], [4.0] * len(sps), [10.0 * c.size for c in cs],
                                 np.full(len(ants["x"]), 1.0)])
         dx, dy = ox[None] - self.x[:, None], oy[None] - self.y[:, None]
         dist = np.hypot(dx, dy) + 1e-6
@@ -304,7 +304,7 @@ class Life:
                 strength = 180 * p ** 2 * (0.3 + 0.7 * light)
                 loom[0, i] = max(loom[0, i], strength * (1.0 if rel > -0.3 else 0.3))
                 loom[1, i] = max(loom[1, i], strength * (1.0 if rel < 0.3 else 0.3))
-        for px, py, size, rng_mm in [(s.x, s.y, 4.0, 25.0)] + [(c.x, c.y, 10.0 * c.size, 35.0) for c in cs]:
+        for px, py, size, rng_mm in [(s.x, s.y, 4.0, 25.0) for s in sps] + [(c.x, c.y, 10.0 * c.size, 35.0) for c in cs]:
             d = np.hypot(self.x - px, self.y - py)
             close = d < rng_mm
             if close.any():
@@ -548,15 +548,17 @@ class Life:
 
     def _predators(self):
         ar = self.arena
-        s = ar.spider
-        if s.target is not None and s.target in self.ids:
-            i = self.ids.index(s.target)
-            if self.stuck[i] and np.hypot(self.x[i] - s.x, self.y[i] - s.y) < 2.5:
-                self._kill(i, "spider", "съедена пауком")
-                ar.predator_ate(s, self.t)
-                s.target = None
+        dead = {d for d, _ in self.dead}
+        for s in ar.spiders:
+            if s.target is not None and s.target in self.ids and s.target not in dead:
+                i = self.ids.index(s.target)
+                if self.stuck[i] and np.hypot(self.x[i] - s.x, self.y[i] - s.y) < 2.5:
+                    self._kill(i, "spider", "съедена пауком")
+                    ar.predator_ate(s, self.t)
+                    s.target = None
+                    dead.add(self.ids[i])
         for c in ar.centipedes:
-            if c.target is not None and c.target in self.ids:
+            if c.target is not None and c.target in self.ids and c.target not in dead:
                 i = self.ids.index(c.target)
                 if self.air_left[i] <= 0 and np.hypot(self.x[i] - c.x, self.y[i] - c.y) < 3.5:
                     self._kill(i, "centipede", "поймана сороконожкой")
