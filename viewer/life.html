@@ -38,9 +38,10 @@
   .layer { opacity:.5; } .layer.on { opacity:1; border-color:currentColor; }
   .layer i { width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:1px; }
   #clock { font-variant-numeric:tabular-nums; color:var(--faded); }
-  .glass { position:relative; border-radius:18px; padding:10px; background:linear-gradient(145deg, #3a4636, #1b2219);
+  .glass { position:relative; width:fit-content; max-width:100%; margin:0 auto; border-radius:18px; padding:10px; background:linear-gradient(145deg, #3a4636, #1b2219);
            box-shadow:0 0 0 1px #0d110c, 0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08); }
-  #arena { display:block; width:100%; border-radius:10px; cursor:crosshair; max-height:80vh; max-width:80vh; margin:0 auto; }
+  #arena { display:block; width:min(80vh, calc(100vw - 460px)); min-width:320px; max-width:100%; border-radius:10px; cursor:crosshair; }
+  @media (max-width:1050px) { #arena { width:min(80vh, calc(100vw - 60px)); } }
 
   .key { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:6px 18px; margin:14px 2px 0; font-size:13px; color:var(--faded); }
   .key div { display:flex; gap:8px; align-items:center; } .key .sym { width:26px; text-align:center; font-size:16px; color:var(--paper); }
@@ -203,9 +204,9 @@ function renderOdor(f) {
     for (const n of names) {
       const c = Math.min(1, odorAt(f, n, x, y));
       if (c < 0.03) continue;
-      const band = Math.ceil(c * 7) / 7;                       // stepped bands read as isolines
-      const edge = (c * 7) % 1 < 0.12 ? 0.25 : 0;              // thin brighter line at each band edge
-      const alpha = Math.min(0.75, 0.1 + band * 0.45 + edge);
+      const band = Math.ceil(c * 6) / 6;                       // stepped bands read as isolines
+      const edge = (c * 6) % 1 < 0.1 ? 0.45 : 0;               // brighter line at each band edge
+      const alpha = Math.min(0.55, band * 0.07 + edge * (0.35 + 0.4 * c));
       const [cr, cg, cb] = LAYER_RGB[n];
       r = r * (1 - alpha) + cr * alpha; g = g * (1 - alpha) + cg * alpha; b = b * (1 - alpha) + cb * alpha; a = 1 - (1 - a) * (1 - alpha);
     }
