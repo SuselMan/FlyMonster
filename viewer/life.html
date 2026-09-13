@@ -87,6 +87,7 @@
       </div>
       <div class="group" role="group" aria-label="Добавить в мир">
         <span class="dim">Добавить:</span>
+        <button class="tool" data-tool="fly" aria-pressed="false">🪰 Муху</button>
         <button class="tool" data-tool="fruit" aria-pressed="false">🍎 Яблоко</button>
         <button class="tool" data-tool="centipede" aria-pressed="false">🐛 Сороконожку</button>
         <button class="tool" data-tool="spider" aria-pressed="false">🕷️ Паука</button>
@@ -159,7 +160,7 @@ const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight:
   web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
   centipede_arrived: "🐛", centipede_died: "💀", ice_on: "🧊", ice_off: "💧", ice_shore: "🧊", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
   pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀",
-  user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
+  user_fly: "🪰", user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
 const SEASON_RU = { spring: "🌱 Весна", summer: "🌻 Лето", autumn: "🍁 Осень", winter: "❄️ Зима" };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
@@ -258,7 +259,7 @@ $("play").onclick = () => { playing = !playing; $("play").textContent = playing 
 $("live").onclick = () => { if (frames.length) simT = frames[frames.length - 1].t - 1; };
 $("smell").onclick = () => { smellMode = !smellMode; $("smell").classList.toggle("on", smellMode); };
 $("follow").onclick = () => { follow = !follow && selected != null; $("follow").classList.toggle("on", follow); if (!follow && selected == null) toast("Сначала выберите муху"); };
-const TOOL_HINT = { fruit: "Зажмите на земле: чем дольше держите, тем крупнее плод",
+const TOOL_HINT = { fly: "Кликните на земле — туда выпустим новую муху (пока есть свободные мозги)", fruit: "Зажмите на земле: чем дольше держите, тем крупнее плод",
   centipede: "Кликните на земле — туда выпустим сороконожку (не больше 4)", spider: "Кликните на земле — туда выпустим паука (не больше 4)" };
 function setTool(tool) {
   placing = tool;
@@ -273,26 +274,29 @@ function toast(text) { const t = $("toast"); t.textContent = text; t.style.displ
 let ghost = null, pending = [];
 const MAX_RELEASED = 4;   // ArenaConfig.max_spiders / max_centipedes_total
 const TOOL_TEXT = {
+  fly: { fail: "Не удалось выпустить муху", late: "Муха появится", now: "Муха прилетает…", full: "Все мозги заняты — сначала кто-то должен умереть" },
   fruit: { fail: "Не удалось положить плод", late: "Плод упадёт", now: "Плод падает…" },
   centipede: { fail: "Не удалось выпустить сороконожку", late: "Сороконожка появится", now: "Сороконожка выходит…", full: "Сороконожек уже 4 — больше нельзя" },
   spider: { fail: "Не удалось выпустить паука", late: "Паук появится", now: "Паук спускается…", full: "Пауков уже 4 — больше нельзя" },
 };
 async function place(g) {
   const tool = g.tool, text = TOOL_TEXT[tool], last = frames[frames.length - 1];
-  if (tool !== "fruit" && last && (tool === "spider" ? last.spiders : last.centipedes || []).length >= MAX_RELEASED) { toast(text.full); return; }
+  if (tool === "fly" && last && last.flies.length >= (meta.max_flies || Infinity)) { toast(text.full); return; }
+  if (tool !== "fruit" && tool !== "fly" && last && (tool === "spider" ? last.spiders : last.centipedes || []).length >= MAX_RELEASED) { toast(text.full); return; }
   const body = { type: tool, x: g.x, y: g.y };
   if (tool === "fruit") body.size = ghostSize(g);
   const r = await fetch(`/api/life/${run}/command`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body) }).catch(() => null);
   if (!r || !r.ok) { toast(text.fail); return; }
   pending.push({ tool, x: g.x, y: g.y, size: body.size, at: performance.now(), simAt: status?.sim_s ?? 0,
-    known: tool === "spider" ? new Set((last?.spiders || []).map(s => s[7])) : new Set((last?.centipedes || []).map(c => c[0])) });
+    known: tool === "fly" ? new Set((last?.flies || []).map(q => q[0])) : tool === "spider" ? new Set((last?.spiders || []).map(s => s[7])) : new Set((last?.centipedes || []).map(c => c[0])) });
   const lag = status ? status.sim_s - simT : 0;
   toast(lag > 10 ? `${text.late} в прямом эфире — вы смотрите запись с отставанием ${fmt(lag)}` : text.now);
 }
 function pendingArrived(p, f) {
   // a new animal (id not seen when the command was sent) near the spot, or a viewer apple there
   if (p.tool === "fruit") return f.fruits.some(fr => fr[5] && Math.hypot(fr[1] - p.x, fr[2] - p.y) < 6);
+  if (p.tool === "fly") return f.flies.some(q => !p.known.has(q[0]) && Math.hypot(q[1] - p.x, q[2] - p.y) < 40);
   if (p.tool === "spider") return f.spiders.some(s => !p.known.has(s[7]) && Math.hypot(s[0] - p.x, s[1] - p.y) < 20);
   return (f.centipedes || []).some(c => !p.known.has(c[0]) && Math.hypot(c[1] - p.x, c[2] - p.y) < 20);
 }
@@ -810,6 +814,7 @@ function draw(now = performance.now()) {
   if (ghost) {
     const [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75;
     if (ghost.tool === "fruit") drawApple(c, sx, sy, 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, 1);
+    else if (ghost.tool === "fly") { const size = 5.5 * z; if (FLY.complete) c.drawImage(FLY, sx - size / 2, sy - size / 2, size, size); }
     else if (ghost.tool === "spider") drawSpider(c, sx, sy, 9 * z, -Math.PI / 2, true, t);
     else drawCentipede(c, [[ghost.x, ghost.y], [ghost.x, ghost.y + 30]], z, t, false, -Math.PI / 2);
     c.globalAlpha = 1;

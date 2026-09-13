@@ -216,9 +216,30 @@ class Life:
                 self.eggs.remove(e)
 
     # --- one world step -----------------------------------------------------
+    def _user_flies(self):
+        # flies released by the viewer: founders (genome of ones, generation 0), only into free brain slots
+        for x, y in self.arena.pending_flies:
+            if not self.free_slots:
+                self.events.append({"t": round(self.t, 2), "fly": -1, "kind": "user_cap", "x": round(x), "y": round(y),
+                                    "text": f"мух уже {len(self.ids)} — все {self.cfg.max_flies} мозгов заняты"})
+                continue
+            fid = self._append(np.array([x]), np.array([y]), np.ones((1, len(GENES))), np.zeros(1), np.full(1, -1))[0]
+            self.events.append({"t": round(self.t, 2), "fly": fid, "kind": "user_fly", "x": round(x), "y": round(y),
+                                "text": "пользователь выпустил муху"})
+        self.arena.pending_flies.clear()
+
     @torch.no_grad()
     def step(self):
+        self._user_flies()
         if not self.ids:
+            # an empty world keeps living: eggs may still hatch, the viewer may release flies
+            self._hatch()
+            self.arena.update(self.t, WORLD_DT, {"ids": [], "x": np.zeros(0), "y": np.zeros(0), "stuck": np.zeros(0, int),
+                                                 "airborne": np.zeros(0, bool), "moving": np.zeros(0, bool)})
+            for e in self.arena.log:
+                self.events.append({**e, "fly": -1})
+            self.arena.log.clear()
+            self.t += WORLD_DT
             return
         light = self.arena.light(self.t)
         slots = torch.tensor(self.slot.astype(np.int64), device=self.dev)

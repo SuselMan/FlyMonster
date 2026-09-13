@@ -42,7 +42,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if self.path.startswith("/api/life/") and self.path.endswith("/command"):
-            # /api/life/<run>/command: append a viewer command for the running world (fruit, centipede, spider)
+            # /api/life/<run>/command: append a viewer command for the running world (fruit, centipede, spider, fly)
             run = self.path.split("/")[3]
             target = ROOT / "results" / run
             if not run.startswith("life_") or "/" in run or ".." in run or not target.is_dir():
@@ -51,7 +51,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 cmd = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
                 kind = cmd.get("type")
-                if kind not in ("fruit", "centipede", "spider"):
+                if kind not in ("fruit", "centipede", "spider", "fly"):
                     raise ValueError("unknown command")
                 line = {"type": kind, "x": float(cmd["x"]), "y": float(cmd["y"])}
                 if kind == "fruit":

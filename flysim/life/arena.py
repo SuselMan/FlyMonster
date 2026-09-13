@@ -316,6 +316,7 @@ class Arena:
     pending_droppings: list = field(default_factory=list)   # (t_due, predator object)
     heat: np.ndarray = None
     nest: tuple = (0.0, 0.0)
+    pending_flies: list = field(default_factory=list)  # viewer-released flies (x, y) for Life to place
     trees: list = field(default_factory=list)          # apple trees (x, y); walkable, drop apples
     nest_food: float = 0.0
     nest_known: int = -1        # food id a returning ant reported
@@ -1109,6 +1110,9 @@ class Arena:
                     self.drop_fruit(t, x, y, sugar=self.cfg.fruit_sugar * size, by_viewer=True)
             elif kind in ("centipede", "spider"):
                 self.release_predator(t, kind, x, y)
+            elif kind == "fly":
+                x, y = float(np.clip(x, 8, self.cfg.width - 8)), float(np.clip(y, 8, self.cfg.height - 8))
+                self.pending_flies.append(self.near_free(x, y))
         return len(lines)
 
     def release_predator(self, t, kind, x, y):

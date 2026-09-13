@@ -45,7 +45,7 @@ def main():
     (out / "meta.json").write_text(json.dumps({
         "arena": life.arena.static(), "readout": list(READOUT), "genes": list(GENES), "senses": list(SENSES),
         "frame_dt": FRAME_EVERY * WORLD_DT, "chunk_s": CHUNK_S, "hatch_time": cfg.hatch_time,
-        "lifespan": cfg.lifespan, "physiology": cfg.physiology.__dict__, "flies": args.flies, "started": time.time(),
+        "lifespan": cfg.lifespan, "physiology": cfg.physiology.__dict__, "flies": args.flies, "max_flies": cfg.max_flies, "started": time.time(),
     }))
 
     frames, chunk, n_events, commands_done, t0 = [], 0, 0, 0, time.perf_counter()
@@ -75,9 +75,8 @@ def main():
             print(f"t={life.t:7.1f}s  wall {wall:7.1f}s  speed {life.t / wall:.2f}x  alive {len(life.ids)}  "
                   f"events {n_events}  {life.frame()['counters']}")
             frames, chunk = [], chunk + 1
-        if not life.ids:
-            print("all flies died")
-            break
+        if not life.ids and k % (per_second * 60) == 0:
+            print("no flies alive (eggs: %d); the world keeps running for viewer-released flies" % len(life.eggs))
 
 
 if __name__ == "__main__":
