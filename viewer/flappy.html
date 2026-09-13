@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flappy Fly</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --dim:#8a91a3;
+          --accent:#f5b83d; --good:#4cc38a; --bad:#e5604d; --blue:#5aa9f0; --violet:#b18cf0; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; padding:16px; }
+  header { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin-bottom:14px; }
+  h1 { font-size:20px; margin:0; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin:0 0 10px; font-weight:600; }
+  a { color:var(--blue); }
+  .stat { color:var(--dim); } .stat b { color:var(--text); }
+  .live { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--dim); margin-right:6px; }
+  .live.on { background:var(--good); box-shadow:0 0 8px var(--good); }
+  select, button, input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 9px; font:inherit; }
+  button { cursor:pointer; } button.on { border-color:var(--accent); color:var(--accent); }
+  .grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:14px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; min-width:0; }
+  canvas { display:block; width:100%; }
+  .bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
+  .bar input[type=number] { width:80px; }
+  .neuron { display:grid; grid-template-columns:120px 1fr 44px; gap:8px; align-items:center; margin:6px 0; font-size:13px; }
+  .track { height:10px; background:#10131a; border-radius:5px; overflow:hidden; }
+  .fill { height:100%; border-radius:5px; transition: width .08s linear; }
+  .note { color:var(--dim); font-size:12px; margin-top:10px; }
+  .flap { font-weight:700; color:var(--accent); min-height:22px; font-size:16px; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--dim); margin-top:6px; }
+  .legend i { display:inline-block; width:12px; height:3px; margin-right:5px; vertical-align:middle; }
+  @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🪰 Flappy Fly</h1>
+  <select id="run"></select>
+  <span class="stat"><span id="live" class="live"></span><span id="liveText">—</span></span>
+  <span class="stat">поколение <b id="gen">—</b></span>
+  <span class="stat">рекорд <b id="record">—</b></span>
+  <a href="/">← лабиринт</a>
+</header>
+
+<div class="grid">
+  <section class="panel">
+    <div class="bar">
+      <label>пок. <input type="number" id="genInput" min="0"></label>
+      <button id="follow" class="on">последнее</button>
+      <select id="game"></select>
+      <button id="play">⏸</button>
+      <select id="speed"><option value="0.5">×0.5</option><option value="1" selected>×1</option><option value="2">×2</option><option value="4">×4</option></select>
+    </div>
+    <canvas id="screen" height="420"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>Что видит и решает мозг</h2>
+    <div id="neurons"></div>
+    <div class="flap" id="flap"></div>
+    <p class="note">Глаза: «щель выше» подаётся на левые зрительные проекционные нейроны, «щель ниже» — на правые,
+      «труба близко» — на детекторы приближения LC4/LPLC2. Решение — без обучаемого слоя: муха машет,
+      когда левый нейрон DNb05 выдал больше спайков, чем правый, за 50 мс (с учётом порога).
+      Эволюция подбирает только силу трёх входов и порог.</p>
+    <p class="note" id="params"></p>
+  </section>
+
+  <section class="panel" style="grid-column:1/-1">
+    <h2>Прогресс</h2>
+    <canvas id="chart" height="220"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--good)"></i>средняя муха поколения (счёт)</span>
+      <span><i style="background:var(--blue)"></i>лучшая в популяции</span>
+      <span><i style="background:var(--violet)"></i>популяция в среднем</span>
+      <span>клик по графику — повтор поколения</span>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const FLY = new Image(); FLY.src = "/viewer/fly.png";
+let run = null, log = [], status = null, replay = null, game = null, gen = null, follow = true;
+let t = 0, playing = true, speed = 1;
+const cache = new Map();
+
+async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw 0; return r.json(); }
+async function getJSONL(u) { const r = await fetch(u); if (!r.ok) return []; return (await r.text()).split("\n").filter(Boolean).map(JSON.parse); }
+const genFile = g => `/results/${run}/replays/gen_${String(g).padStart(5, "0")}.json`;
+function loadReplay(g) { if (!cache.has(g)) cache.set(g, getJSON(genFile(g)).catch(() => null)); return cache.get(g); }
+
+async function refresh() {
+  const runs = (await getJSON("/api/runs").catch(() => [])).filter(r => r.name.startsWith("flappy_"));
+  const sel = $("run");
+  if (sel.options.length !== runs.length) { sel.innerHTML = runs.map(r => `<option>${r.name}</option>`).join(""); if (!run && runs[0]) run = runs[0].name; sel.value = run; }
+  if (!run) return;
+  status = runs.find(r => r.name === run);
+  log = await getJSONL(`/results/${run}/log.jsonl`);
+  const last = log[log.length - 1];
+  const age = status?.time ? Date.now() / 1000 - status.time : Infinity;
+  const alive = age < Math.max(120, 3 * (status?.seconds || 0));
+  $("live").classList.toggle("on", alive); $("liveText").textContent = alive ? "обучается" : (last ? "остановлено" : "нет данных");
+  $("gen").textContent = last ? `${last.gen}${status?.gens ? " / " + status.gens : ""}` : "—";
+  $("record").textContent = log.length ? Math.max(...log.flatMap(r => [r.center_score, ...(r.showcase_score || [])])) : "—";
+  drawChart();
+  if (follow && last && last.gen !== gen) show(last.gen);
+}
+$("run").onchange = e => { run = e.target.value; cache.clear(); gen = null; refresh(); };
+
+async function show(g, keepGame = true) {
+  const d = await loadReplay(g); if (!d) return;
+  replay = d; gen = g; $("genInput").value = g;
+  const prev = $("game").value;
+  $("game").innerHTML = d.games.map((x, i) => `<option value="${i}">${i >= d.games.length - 2 ? "витрина " + (i - d.games.length + 3) : "игра " + (i + 1)} · счёт ${x.score}</option>`).join("");
+  $("game").value = keepGame && prev && d.games[+prev] ? prev : String(d.games.length - 2);
+  game = d.games[+$("game").value]; t = 0; playing = true; $("play").textContent = "⏸";
+  $("params").textContent = `Поколение ${g}: усиления ` + Object.entries(d.params.gains).map(([k, v]) => `${NAMES[k]} ×${v.toFixed(2)}`).join(", ") + `, порог ${d.params.threshold.toFixed(1)}`;
+}
+$("genInput").onchange = e => { follow = false; $("follow").classList.remove("on"); show(+e.target.value); };
+$("follow").onclick = () => { follow = !follow; $("follow").classList.toggle("on", follow); if (follow && log.length) show(log[log.length - 1].gen); };
+$("game").onchange = e => { game = replay.games[+e.target.value]; t = 0; playing = true; };
+$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; if (playing && game && t >= game.trace.length) t = 0; };
+$("speed").onchange = e => speed = +e.target.value;
+
+const NAMES = { gap_above: "щель выше", gap_below: "щель ниже", pipe_near: "труба близко" };
+
+// ---------- game rendering ----------
+const screen = $("screen");
+function drawGame() {
+  const dpr = devicePixelRatio || 1, W = screen.clientWidth, H = Math.min(420, Math.round(W * 0.6));
+  screen.style.height = H + "px"; screen.width = W * dpr; screen.height = H * dpr;
+  const c = screen.getContext("2d"); c.scale(dpr, dpr);
+  const sky = c.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, "#1b2a44"); sky.addColorStop(1, "#2c4a5e");
+  c.fillStyle = sky; c.fillRect(0, 0, W, H);
+  if (!game) return;
+  const cfg = replay.cfg, i = Math.min(Math.floor(t), game.trace.length - 1), tick = t;
+  // world x in [0, ~1.6] fills the width; y 0 at bottom
+  const scale = H, X = x => x * scale, Y = y => H - y * scale;
+  // parallax dots
+  c.fillStyle = "rgba(255,255,255,.06)";
+  for (let k = 0; k < 40; k++) { const x = ((k * 97 - tick * 1.5) % W + W) % W; c.fillRect(x, (k * 53) % H, 2, 2); }
+  for (const [x0, gy] of game.pipes) {
+    const x = x0 - cfg.speed * tick; if (x > W / scale + 0.2 || x + cfg.pipe_w < -0.1) continue;
+    c.fillStyle = "#3e9e5c"; c.strokeStyle = "#2a6e40"; c.lineWidth = 2;
+    const top = gy + cfg.gap / 2, bot = gy - cfg.gap / 2;
+    c.fillRect(X(x), 0, X(cfg.pipe_w), Y(top)); c.strokeRect(X(x), -2, X(cfg.pipe_w), Y(top) + 2);
+    c.fillRect(X(x), Y(bot), X(cfg.pipe_w), H - Y(bot)); c.strokeRect(X(x), Y(bot), X(cfg.pipe_w), H - Y(bot) + 2);
+    c.fillStyle = "#4fb36e"; c.fillRect(X(x) - 4, Y(top) - 12, X(cfg.pipe_w) + 8, 12); c.fillRect(X(x) - 4, Y(bot), X(cfg.pipe_w) + 8, 12);
+  }
+  const s = game.trace[i]; if (!s) return;
+  const next = game.trace[Math.min(i + 1, game.trace.length - 1)];
+  const frac = t - Math.floor(t), y = s.y + (next.y - s.y) * (i + 1 < game.trace.length ? frac : 0);
+  const vy = next.y - s.y, dead = t >= game.trace.length - 1 && game.ticks < cfg.max_ticks;
+  const size = cfg.fly_r * 2 * scale * 2.2;
+  c.save(); c.translate(X(cfg.fly_x), Y(y));
+  c.rotate(Math.PI / 2 - Math.max(-0.6, Math.min(0.6, vy * 12)));   // sprite looks up; turn it to face right
+  if (dead) c.filter = "grayscale(1) brightness(.6)";
+  if (FLY.complete && FLY.naturalWidth) c.drawImage(FLY, -size / 2, -size / 2, size, size);
+  c.restore();
+  if (s.flap) { c.fillStyle = "rgba(245,184,61,.8)"; c.font = "bold 13px system-ui"; c.fillText("взмах", X(cfg.fly_x) - 18, Y(y) + size * .8); }
+  // score
+  const passed = game.pipes.filter(([x0]) => x0 - cfg.speed * tick + cfg.pipe_w < cfg.fly_x - cfg.fly_r).length;
+  c.fillStyle = "#fff"; c.font = "bold 36px system-ui"; c.textAlign = "center"; c.fillText(passed, W / 2, 50); c.textAlign = "left";
+  if (dead) { c.fillStyle = "rgba(0,0,0,.45)"; c.fillRect(0, H / 2 - 30, W, 60); c.fillStyle = "#fff"; c.font = "bold 22px system-ui"; c.textAlign = "center"; c.fillText(`врезалась · счёт ${game.score}`, W / 2, H / 2 + 8); c.textAlign = "left"; }
+  else if (t >= game.trace.length - 1) { c.fillStyle = "rgba(0,0,0,.45)"; c.fillRect(0, H / 2 - 30, W, 60); c.fillStyle = "#fff"; c.font = "bold 22px system-ui"; c.textAlign = "center"; c.fillText(`время вышло · счёт ${game.score}`, W / 2, H / 2 + 8); c.textAlign = "left"; }
+  drawNeurons(s);
+}
+function drawNeurons(s) {
+  const rows = [
+    ["щель выше", s.gap_above, 1, "--blue"], ["щель ниже", s.gap_below, 1, "--violet"], ["труба близко", s.pipe_near, 1, "--dim"],
+    ["DNb05 левый", s.dn["DNb05 L"], 12, "--good"], ["DNb05 правый", s.dn["DNb05 R"], 12, "--bad"],
+    ["DNa01 левый", s.dn["DNa01 L"], 12, "--dim"], ["DNa01 правый", s.dn["DNa01 R"], 12, "--dim"],
+    ["гиг. волокно", s.dn["DNp01 L"], 12, "--dim"],
+  ];
+  $("neurons").innerHTML = rows.map(([name, v, max, color]) => `<div class="neuron"><span>${name}</span>
+    <div class="track"><div class="fill" style="width:${Math.min(100, (v / max) * 100)}%;background:var(${color})"></div></div>
+    <span style="text-align:right;color:var(--dim)">${max === 1 ? v.toFixed(2) : v}</span></div>`).join("");
+  $("flap").textContent = s.flap ? "↑ ВЗМАХ (левый DNb05 сильнее)" : "";
+}
+
+// ---------- chart ----------
+const chart = $("chart"); let geom = null;
+function drawChart() {
+  const dpr = devicePixelRatio || 1, W = chart.clientWidth, H = 220;
+  chart.width = W * dpr; chart.height = H * dpr; const c = chart.getContext("2d"); c.scale(dpr, dpr);
+  const pad = { l: 34, r: 10, t: 10, b: 22 }, w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const maxS = Math.max(5, ...log.map(r => r.best_score)); const n = Math.max(2, log.length);
+  const x = i => pad.l + i / (n - 1) * w, y = v => pad.t + (1 - v / maxS) * h; geom = { pad, w, n };
+  c.strokeStyle = css("--line"); c.fillStyle = css("--dim"); c.font = "11px system-ui";
+  for (let k = 0; k <= 4; k++) { const v = maxS * k / 4; c.beginPath(); c.moveTo(pad.l, y(v)); c.lineTo(W - pad.r, y(v)); c.stroke(); c.fillText(v.toFixed(0), 6, y(v) + 4); }
+  const line = (key, color, wd) => { c.strokeStyle = color; c.lineWidth = wd; c.beginPath(); log.forEach((r, i) => i ? c.lineTo(x(i), y(r[key])) : c.moveTo(x(i), y(r[key]))); c.stroke(); };
+  if (!log.length) return;
+  line("pop_score", css("--violet"), 1.5); line("best_score", css("--blue"), 1.5); line("center_score", css("--good"), 2.5);
+  if (gen != null) { const i = log.findIndex(r => r.gen === gen); if (i >= 0) { c.strokeStyle = css("--accent"); c.beginPath(); c.moveTo(x(i), pad.t); c.lineTo(x(i), H - pad.b); c.stroke(); } }
+  c.fillStyle = css("--dim"); c.fillText(log[0].gen, pad.l, H - 5); c.fillText(log[log.length - 1].gen, W - pad.r - 20, H - 5);
+}
+chart.onclick = ev => { if (!geom || !log.length) return; const r = chart.getBoundingClientRect();
+  const i = Math.max(0, Math.min(log.length - 1, Math.round((ev.clientX - r.left - geom.pad.l) / geom.w * (geom.n - 1))));
+  follow = false; $("follow").classList.remove("on"); show(log[i].gen); };
+
+setInterval(() => { if (game && playing) { t += speed * 20 / 30; if (t > game.trace.length + 25) t = 0; } drawGame(); }, 1000 / 30);
+addEventListener("resize", drawChart);
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
