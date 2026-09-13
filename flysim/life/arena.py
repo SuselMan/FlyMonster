@@ -309,6 +309,7 @@ class Arena:
     counters: dict = field(default_factory=dict)
     _food_cache: tuple = (None, None)
     _clim: tuple = None
+    _obs: tuple = None
     _version: int = 0
 
     @staticmethod
@@ -357,18 +358,26 @@ class Arena:
         return a
 
     # --- geometry --------------------------------------------------------------
+    def _inside_any(self, px, py, pad, water_only=False):
+        """All obstacles at once (static geometry cached as arrays)."""
+        if self._obs is None:
+            O = self.obstacles
+            self._obs = tuple(np.array(v, dtype=float) for v in (
+                [o.x for o in O], [o.y for o in O], [np.cos(-o.angle) for o in O], [np.sin(-o.angle) for o in O],
+                [o.rx for o in O], [o.ry for o in O], [o.kind == "water" for o in O]))
+        ox, oy, c, s, rx, ry, water = self._obs
+        px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+        dx, dy = px[..., None] - ox, py[..., None] - oy
+        hit = ((dx * c - dy * s) / (rx + pad)) ** 2 + ((dx * s + dy * c) / (ry + pad)) ** 2 < 1
+        if water_only:
+            hit &= water > 0
+        return hit.any(-1)
+
     def blocked(self, px, py, pad: float = 0.0):
-        out = np.zeros_like(np.asarray(px, dtype=float), dtype=bool)
-        for o in self.obstacles:
-            out |= o.inside(px, py, pad)
-        return out
+        return self._inside_any(px, py, pad)
 
     def in_water(self, px, py):
-        out = np.zeros_like(np.asarray(px, dtype=float), dtype=bool)
-        for o in self.obstacles:
-            if o.kind == "water":
-                out |= o.inside(px, py)
-        return out
+        return self._inside_any(px, py, 0.0, water_only=True)
 
     def free_spot(self, margin: float = 20.0):
         for _ in range(200):
@@ -935,6 +944,16 @@ class Arena:
         cold = self.air_temperature(t) < cfg.ant_min_temp       # the colony stays in the nest
         if cold:
             st[(st == ANT_SEARCH) | (st == ANT_TO_FOOD) | (st == ANT_EAT)] = ANT_HOME
+        # nearest ground food for every searching ant at once
+        search = np.flatnonzero(st == ANT_SEARCH)
+        found = {}
+        if len(search) and len(fid):
+            d = np.hypot(fa["x"][None] - A["x"][search, None], fa["y"][None] - A["y"][search, None])
+            d = np.where(fa["edible"] & (fa["kind"] != 4), d, np.inf)     # ground foragers: no nectar
+            k = np.argmin(d, 1)
+            for a, kk, dd in zip(search, k, d[np.arange(len(search)), k]):
+                if dd < cfg.ant_sense:
+                    found[a] = fid[kk]
         # rare transitions in a small loop (a handful of ants)
         for a in range(n):
             s = st[a]
@@ -952,13 +971,9 @@ class Arena:
                         A["h"][a] = self.rng.uniform(-np.pi, np.pi)
             elif s == ANT_SEARCH:
                 A["timer"][a] -= dt
-                if len(fid):
-                    d = np.hypot(fa["x"] - A["x"][a], fa["y"] - A["y"][a])
-                    d = np.where(fa["edible"] & (fa["kind"] != 4), d, np.inf)     # ground foragers: no nectar
-                    k = int(np.argmin(d))
-                    if d[k] < cfg.ant_sense:
-                        st[a], A["target"][a] = ANT_TO_FOOD, fid[k]
-                        continue
+                if a in found:
+                    st[a], A["target"][a] = ANT_TO_FOOD, found[a]
+                    continue
                 if A["timer"][a] <= 0:
                     st[a] = ANT_HOME
             elif s in (ANT_TO_FOOD, ANT_EAT):
