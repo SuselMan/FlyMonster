@@ -28,14 +28,16 @@ Food ecology (every food item has a cause and a finite amount):
   flies are not born into an empty world (again a choice, not a measurement).
 
 Animals (all scripted):
-- A spider builds webs where flies walk often (running heatmap of fly
-  positions) or near food, spends seconds building, waits, and walks to flies
-  stuck on any of its webs. Webs age: strength, stickiness radius and
-  visibility fade until they disappear. At most `max_webs` at a time.
+- Spiders build webs where flies walk often (running heatmap of fly
+  positions) or near food, spend seconds building, wait, and walk to flies
+  stuck on their own webs (or on webs nobody owns). Webs age: strength,
+  stickiness radius and visibility fade until they disappear. Each spider
+  keeps at most `max_webs` webs. The world starts with one spider; a viewer
+  can release more spiders and centipedes (commands file, capped).
 - Centipedes roam and hunt flies they see (cone) or feel (vibration). They
   age and die; new ones walk in from the map edge (1-2 alive on average).
 - Both predators have energy: they hunt/build only when hungry, and when
-  starving they slow down and rest. The spider never dies.
+  starving they slow down and rest. Spiders never die.
 - Ants from a nest search for food, eat, carry portions home and return to
   food a nestmate found (simple recruitment). They do not harm flies.
 - Birds dive at flies in daylight. Wind slowly changes; odor plumes are
@@ -146,6 +148,7 @@ class Web:
     started: float
     build: float = 0.0         # 0..1 while the spider builds it
     done_at: float | None = None
+    owner: int = -1            # id of the spider that built it
     strength: float = 1.0      # 1 new .. 0 gone; drops with age and when flies tear free
 
     def radius(self) -> float:
@@ -159,6 +162,7 @@ class Web:
 
 @dataclass
 class Spider:
+    id: int
     x: float
     y: float
     heading: float = 0.0
@@ -242,6 +246,8 @@ class ArenaConfig:
     spider_hunger_s: float = 600.0          # full -> empty energy
     spider_meal: float = 0.6
     spider_hungry: float = 0.75             # builds webs below this energy
+    max_spiders: int = 4                    # cap for viewer-released spiders (all spiders count)
+    max_centipedes_total: int = 4           # cap for viewer-released centipedes (all centipedes count)
     # centipede
     centipede_hunger_s: float = 900.0
     centipede_meal: float = 0.5
@@ -296,7 +302,8 @@ class Arena:
     shelters: list = field(default_factory=list)       # leaf-litter patches (walkable, warmer in cold)
     shadows: list = field(default_factory=list)
     webs: list = field(default_factory=list)
-    spider: Spider | None = None
+    spiders: list = field(default_factory=list)
+    next_spider_id: int = 0
     centipedes: list = field(default_factory=list)
     next_centipede_id: int = 0
     no_centipede_since: float = 0.0
@@ -342,7 +349,7 @@ class Arena:
         ]
         a.trees = [(W * 0.64, H * 0.24), (W * 0.22, H * 0.56)]
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
-        a.spider = Spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
+        first = a.add_spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
         a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)
         a.nest = (W * 0.93, H * 0.08)
         n = cfg.n_ants
@@ -360,7 +367,7 @@ class Arena:
             x, y = a.free_spot()
             a.add_flower(0.0, x, y, age=float(a.rng.uniform(cfg.flower_grow, 600)))
         # the spider starts with one finished web at its first spot
-        w = Web(a.next_web_id, a.spider.x, a.spider.y, float(np.mean(cfg.web_radius)), 0.0, 1.0, 0.0)
+        w = Web(a.next_web_id, first.x, first.y, float(np.mean(cfg.web_radius)), 0.0, 1.0, 0.0, owner=first.id)
         a.next_web_id += 1
         a.webs.append(w)
         return a
@@ -535,8 +542,14 @@ class Arena:
 
     def predator_ate(self, p, t: float):
         cfg = self.cfg
-        p.energy = min(1.0, p.energy + (cfg.spider_meal if p is self.spider else cfg.centipede_meal))
+        p.energy = min(1.0, p.energy + (cfg.spider_meal if isinstance(p, Spider) else cfg.centipede_meal))
         self.pending_droppings.append((t + float(self.rng.uniform(*cfg.dropping_delay)), p))
+
+    def add_spider(self, x, y, **kw) -> Spider:
+        s = Spider(self.next_spider_id, float(x), float(y), **kw)
+        self.next_spider_id += 1
+        self.spiders.append(s)
+        return s
 
     def spawn_centipede(self, t, x=None, y=None, announce=True):
         cfg = self.cfg
@@ -626,7 +639,8 @@ class Arena:
                 fa = self.food_arrays(t)
                 c = plume(fa["x"], fa["y"], fa[name], sig).sum(-1)
         elif name == "spider":
-            c += plume(self.spider.x, self.spider.y, 0.8, sig * 0.7)
+            for sp in self.spiders:
+                c += plume(sp.x, sp.y, 0.8, sig * 0.7)
         elif name == "centipede":
             for cp in self.centipedes:
                 c += plume(cp.x, cp.y, 1.0 * cp.size, sig * 0.6)
@@ -650,7 +664,7 @@ class Arena:
         if w is not None:
             w.strength -= damage
 
-    def _web_site(self):
+    def _web_site(self, s: Spider):
         """Where to build: cells flies walked through lately, plus smell of food nearby."""
         cfg = self.cfg
         cs = cfg.heat_cell
@@ -674,7 +688,7 @@ class Arena:
         if not ok.any():
             return None
         # a spider walks ~6 mm/s: far sites cost it
-        score = score - 0.4 * np.hypot(cx - self.spider.x, cy - self.spider.y) / max(cfg.width, cfg.height)
+        score = score - 0.4 * np.hypot(cx - s.x, cy - s.y) / max(cfg.width, cfg.height)
         score = np.where(ok, score + 0.05 * self.rng.random(len(score)), -np.inf)
         top = np.argsort(-score)[:5]
         top = top[np.isfinite(score[top])]
@@ -717,7 +731,9 @@ class Arena:
             if not any(s.target == fid for s in self.shadows):
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
         self._webs(t, dt)
-        self._spider(t, dt, flies)
+        taken = {sp.target for sp in self.spiders} - {None}
+        for sp in self.spiders:
+            self._spider(sp, t, dt, flies, taken)
         for c in list(self.centipedes):
             self._centipede(c, t, dt, flies)
         self._centipede_population(t, dt)
@@ -734,7 +750,7 @@ class Arena:
             x, y = self.near_free(p.x, p.y)
             self.add_food("dropping", t, x, y, cfg.dropping_food)
             self.counters["droppings"] += 1
-            self._event(t, "dropping", x, y, "паук оставил помёт — еда" if p is self.spider else "сороконожка оставила помёт — еда")
+            self._event(t, "dropping", x, y, "паук оставил помёт — еда" if isinstance(p, Spider) else "сороконожка оставила помёт — еда")
         # flowers: seedlings sprout, nectar refills, wind-blown seeds when few are left
         for item in [q for q in self.pending_flowers if q[0] <= t]:
             self.pending_flowers.remove(item)
@@ -794,11 +810,13 @@ class Arena:
                 self.webs.remove(w)
                 self._event(t, "web_gone", w.x, w.y, "старая паутина разрушилась")
 
-    def _spider(self, t, dt, flies):
-        s, cfg = self.spider, self.cfg
+    def _spider(self, s, t, dt, flies, taken):
+        """taken: fly ids spiders are already walking to (kept up to date here)."""
+        cfg = self.cfg
         ids = flies["ids"]
         if self._hibernate(s, t, cfg.spider_min_temp, "паук"):
             s.energy = max(0.0, s.energy - cfg.hibernation_metabolism * dt / cfg.spider_hunger_s)
+            taken.discard(s.target)
             s.target = None
             return                                  # does not move, hunt or build (a web in progress waits)
         s.energy = max(0.0, s.energy - dt / cfg.spider_hunger_s)
@@ -808,18 +826,23 @@ class Arena:
         s.starving = starving
         speed = s.speed * (0.5 if starving else 1.0)
         if s.target is not None and (s.target not in ids or not flies["stuck"][ids.index(s.target)]):
+            taken.discard(s.target)
             s.target = None                         # eaten by someone else, or it tore free
-        if s.target is None:
-            stuck = np.flatnonzero(np.asarray(flies["stuck"]) > 0)
+        if s.target is None and len(ids):
+            # flies stuck on its own webs, or on webs whose owner is gone, not claimed by another spider
+            alive = {sp.id for sp in self.spiders}
+            mine = [w.id + 1 for w in self.webs if w.owner == s.id or w.owner not in alive]
+            stuck = np.flatnonzero(np.isin(np.asarray(flies["stuck"]), mine) & ~np.isin(ids, list(taken)))
             if len(stuck):
                 d = np.hypot(np.asarray(flies["x"])[stuck] - s.x, np.asarray(flies["y"])[stuck] - s.y)
                 s.target = ids[int(stuck[np.argmin(d)])]
+                taken.add(s.target)
                 if s.state == "build":
-                    self._finish_build(t, interrupted=True)
+                    self._finish_build(s, t, interrupted=True)
                 s.state = "wait"
         if s.target is not None:
             i = ids.index(s.target)
-            self._spider_walk(flies["x"][i], flies["y"][i], speed, dt)
+            self._spider_walk(s, flies["x"][i], flies["y"][i], speed, dt)
             return
         if s.state == "rest":
             s.timer -= dt
@@ -827,8 +850,8 @@ class Arena:
                 s.state = "wait"
             return
         if s.state == "travel":
-            if self._spider_walk(*s.site, speed, dt) < 1.0:
-                w = Web(self.next_web_id, s.site[0], s.site[1], float(self.rng.uniform(*cfg.web_radius)), t)
+            if self._spider_walk(s, *s.site, speed, dt) < 1.0:
+                w = Web(self.next_web_id, s.site[0], s.site[1], float(self.rng.uniform(*cfg.web_radius)), t, owner=s.id)
                 self.next_web_id += 1
                 self.webs.append(w)
                 s.web, s.state, s.timer = w.id, "build", 0.0
@@ -846,17 +869,18 @@ class Arena:
             s.heading = float(np.arctan2(ny - s.y, nx - s.x))
             s.x, s.y = float(nx), float(ny)
             if w.build >= 1.0:
-                self._finish_build(t)
+                self._finish_build(s, t)
             return
-        # wait at the hub of the newest web; hungry spiders build more webs
-        home = max(self.webs, key=lambda w: w.started) if self.webs else None
+        # wait at the hub of its newest web; hungry spiders build more webs
+        own = [w for w in self.webs if w.owner == s.id]
+        home = max(own, key=lambda w: w.started) if own else None
         if home is not None:
-            self._spider_walk(home.x, home.y, speed, dt)
+            self._spider_walk(s, home.x, home.y, speed, dt)
         if starving and self.rng.random() < dt / 30.0:
             s.state, s.timer = "rest", float(self.rng.uniform(15, 30))
             return
-        if s.energy < cfg.spider_hungry and len(self.webs) < cfg.max_webs and t - s.last_build > cfg.web_cooldown:
-            site = self._web_site()
+        if s.energy < cfg.spider_hungry and len(own) < cfg.max_webs and t - s.last_build > cfg.web_cooldown:
+            site = self._web_site(s)
             s.last_build = t
             if site is not None:
                 s.site, s.state = site, "travel"
@@ -871,8 +895,7 @@ class Arena:
                         f"{name}: холодно — оцепенение, спячка" if cold else f"{name}: потеплело — проснулся")
         return cold
 
-    def _finish_build(self, t, interrupted=False):
-        s = self.spider
+    def _finish_build(self, s, t, interrupted=False):
         w = self.web(s.web)
         s.web, s.state = None, "wait"
         if w is None:
@@ -886,8 +909,7 @@ class Arena:
         self.counters["webs_built"] += 1
         self._event(t, "web_done", w.x, w.y, "паутина готова" if not interrupted else "паук бросил недоплетённую паутину")
 
-    def _spider_walk(self, tx, ty, speed, dt) -> float:
-        s = self.spider
+    def _spider_walk(self, s, tx, ty, speed, dt) -> float:
         d = float(np.hypot(tx - s.x, ty - s.y))
         if d > 0.5:
             want = np.arctan2(ty - s.y, tx - s.x)
@@ -1073,16 +1095,46 @@ class Arena:
                 cmd = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if cmd.get("type") == "fruit":
-                x = float(np.clip(cmd.get("x", 0), 8, self.cfg.width - 8))
-                y = float(np.clip(cmd.get("y", 0), 8, self.cfg.height - 8))
+            kind = cmd.get("type")
+            try:
+                x, y = float(cmd.get("x", 0)), float(cmd.get("y", 0))
+            except (TypeError, ValueError):
+                continue
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            if kind == "fruit":
+                x, y = float(np.clip(x, 8, self.cfg.width - 8)), float(np.clip(y, 8, self.cfg.height - 8))
                 if not self.blocked(x, y):
                     size = float(np.clip(cmd.get("size", 1.0), 0.3, 2.5))
                     self.drop_fruit(t, x, y, sugar=self.cfg.fruit_sugar * size, by_viewer=True)
+            elif kind in ("centipede", "spider"):
+                self.release_predator(t, kind, x, y)
         return len(lines)
 
+    def release_predator(self, t, kind, x, y):
+        """A viewer releases a spider or a centipede: capped, not into water or onto stones."""
+        cfg = self.cfg
+        x, y = float(np.clip(x, 12, cfg.width - 12)), float(np.clip(y, 12, cfg.height - 12))
+        name = "паука" if kind == "spider" else "сороконожку"
+        if self.blocked(x, y, pad=4):
+            self._event(t, "user_blocked", x, y, f"сюда нельзя выпустить {name}: вода или камень")
+            return None
+        if kind == "spider":
+            if len(self.spiders) >= cfg.max_spiders:
+                self._event(t, "user_cap", x, y, f"пауков уже {len(self.spiders)} — больше выпустить нельзя")
+                return None
+            p = self.add_spider(x, y, heading=float(self.rng.uniform(-np.pi, np.pi)))
+            self._event(t, "user_spider", x, y, "пользователь выпустил паука")
+        else:
+            if len(self.centipedes) >= cfg.max_centipedes_total:
+                self._event(t, "user_cap", x, y, f"сороконожек уже {len(self.centipedes)} — больше выпустить нельзя")
+                return None
+            p = self.spawn_centipede(t, x, y, announce=False)
+            self._event(t, "user_centipede", x, y, "пользователь выпустил сороконожку")
+        return p
+
     def snapshot(self, t: float) -> dict:
-        s, A = self.spider, self.ants
+        A = self.ants
         return {
             "t": round(t, 3), "light": round(self.light(t), 3), "wind": [round(float(v), 2) for v in self.wind],
             "season": self.season(t), "year_phase": round(self.year_phase(t), 4), "temp": round(self.air_temperature(t), 1),
@@ -1102,8 +1154,9 @@ class Arena:
             # webs: [id, x, y, radius, strength, build]
             "webs": [[w.id, round(w.x, 1), round(w.y, 1), round(w.radius(), 1), round(w.strength, 2), round(w.build, 2)]
                      for w in self.webs],
-            "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1,
-                       s.state, round(s.energy, 2), int(s.hibernating)],
+            # spiders: [x, y, heading, target, state, energy, hibernating, id]
+            "spiders": [[round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1,
+                         s.state, round(s.energy, 2), int(s.hibernating), s.id] for s in self.spiders],
             # centipedes: [id, x, y, heading, target, body points, energy, resting, size, age/lifespan, hibernating]
             "centipedes": [[c.id, round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
                             c.body[::12], round(c.energy, 2), int(c.rest > 0), round(c.size, 2), round(c.age / c.lifespan, 2),

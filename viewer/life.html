@@ -84,7 +84,12 @@
       <div class="group">
         <button id="smell">Как чует муха</button>
         <button id="follow">Следить за мухой</button>
-        <button id="place">Положить яблоко</button>
+      </div>
+      <div class="group" role="group" aria-label="Добавить в мир">
+        <span class="dim">Добавить:</span>
+        <button class="tool" data-tool="fruit" aria-pressed="false">🍎 Яблоко</button>
+        <button class="tool" data-tool="centipede" aria-pressed="false">🐛 Сороконожку</button>
+        <button class="tool" data-tool="spider" aria-pressed="false">🕷️ Паука</button>
       </div>
       <span id="clock">—</span>
     </div>
@@ -109,6 +114,7 @@
       <div><span class="sym" style="color:#8a5a2b">●</span>помёт хищника — немного еды</div>
       <div><span class="sym">🦠</span>серое тело — разлагается и станет едой</div>
       <div><span class="sym">🕸️</span>паутина: бледнее — старее и слабее</div>
+      <div><span class="sym">🐛🕷️</span>«Добавить» — выпустить хищника (до 4 каждого вида)</div>
       <div><span class="sym">🐜</span>муравьи уносят еду в муравейник</div>
       <div><span class="sym">🌼</span>цветок: нектар пополняется; 🌱 росток</div>
       <div><span class="sym" style="color:#ffe066">∴</span>жёлтые точки — муха несёт пыльцу</div>
@@ -118,7 +124,7 @@
     <p class="note" style="margin-top:10px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, прыжок — гигантское волокно DNp01,
       долгий перелёт — DNp02/DNp04/DNp11, еду — моторный нейрон хоботка MN9. Шаг и полёт исполняет модель тела: нейроны ног и крыльев лежат
       в брюшной нервной цепочке, их нет в данных мозга. Паук, сороконожки, муравьи и цветы — скриптовые, но мухи видят их только глазами, усиками и касанием.
-      Яблоки появляются, только когда их кладёт зритель; остальная еда — помёт хищников, разложившиеся тела и нектар цветов.</p>
+      Яблоки появляются, только когда их кладёт зритель; он же может выпустить ещё пауков и сороконожек. Остальная еда — помёт хищников, разложившиеся тела и нектар цветов.</p>
   </section>
   <aside>
     <div class="label">
@@ -152,11 +158,12 @@ const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight:
   fruit_drop: "🍎", tree_apple: "🍏", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
   web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
   centipede_arrived: "🐛", centipede_died: "💀", ice_on: "🧊", ice_off: "💧", ice_shore: "🧊", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
-  pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀", ...DEATH_ICON };
+  pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀",
+  user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
 const SEASON_RU = { spring: "🌱 Весна", summer: "🌻 Лето", autumn: "🍁 Осень", winter: "❄️ Зима" };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
-let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = false;
+let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = null;   // placing: null | "fruit" | "centipede" | "spider"
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const ri = (a, b) => a + Math.random() * (b - a);
 
@@ -177,7 +184,9 @@ async function refresh() {
   if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
   while (status && chunkLoaded + 1 < status.chunks) {
     const c = await getJSON(`/results/${run}/chunks/chunk_${String(chunkLoaded + 1).padStart(5, "0")}.json`).catch(() => null);
-    if (!c) break; frames.push(...c.frames); chunkLoaded++;
+    if (!c) break;
+    for (const fr of c.frames) if (!fr.spiders) fr.spiders = fr.spider ? [fr.spider] : [];   // old recordings: one spider
+    frames.push(...c.frames); chunkLoaded++;
     if (frames.length > 20 * 60 * 10) frames.splice(0, frames.length - 20 * 60 * 10);
   }
   const r = await fetch(`/results/${run}/events.jsonl`); if (r.ok) events = (await r.text()).split("\n").filter(Boolean).map(JSON.parse);
@@ -217,7 +226,7 @@ const camera = {
 let drag = null;
 view.addEventListener("pointerdown", e => {
   view.setPointerCapture(e.pointerId);
-  if (placing) { const [x, y] = camera.toWorld(e.offsetX, e.offsetY); ghost = { x, y, start: performance.now() }; return; }
+  if (placing) { const [x, y] = camera.toWorld(e.offsetX, e.offsetY); ghost = { tool: placing, x, y, start: performance.now() }; return; }
   drag = { x: e.clientX, y: e.clientY, cx: camera.cx, cy: camera.cy, moved: false };
 });
 view.addEventListener("pointermove", e => {
@@ -229,7 +238,7 @@ view.addEventListener("pointermove", e => {
 });
 view.addEventListener("pointerup", e => {
   view.classList.remove("dragging");
-  if (ghost) { dropFruit(ghost); ghost = null; return; }
+  if (ghost) { place(ghost); ghost = null; return; }
   if (drag && !drag.moved) pick(e.offsetX, e.offsetY);
   drag = null;
 });
@@ -249,20 +258,43 @@ $("play").onclick = () => { playing = !playing; $("play").textContent = playing 
 $("live").onclick = () => { if (frames.length) simT = frames[frames.length - 1].t - 1; };
 $("smell").onclick = () => { smellMode = !smellMode; $("smell").classList.toggle("on", smellMode); };
 $("follow").onclick = () => { follow = !follow && selected != null; $("follow").classList.toggle("on", follow); if (!follow && selected == null) toast("Сначала выберите муху"); };
-$("place").onclick = () => { placing = !placing; $("place").classList.toggle("on", placing); view.classList.toggle("placing", placing);
-  $("hint").textContent = placing ? "Зажмите на земле: чем дольше держите, тем крупнее плод" : "Перетаскивайте карту, колесо — масштаб, клик по мухе — карточка"; };
+const TOOL_HINT = { fruit: "Зажмите на земле: чем дольше держите, тем крупнее плод",
+  centipede: "Кликните на земле — туда выпустим сороконожку (не больше 4)", spider: "Кликните на земле — туда выпустим паука (не больше 4)" };
+function setTool(tool) {
+  placing = tool;
+  for (const b of document.querySelectorAll("button.tool")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); }
+  view.classList.toggle("placing", !!tool);
+  $("hint").textContent = TOOL_HINT[tool] || "Перетаскивайте карту, колесо — масштаб, клик по мухе — карточка";
+}
+for (const b of document.querySelectorAll("button.tool")) b.onclick = () => setTool(placing === b.dataset.tool ? null : b.dataset.tool);
 function toast(text) { const t = $("toast"); t.textContent = text; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
 
-// ============ viewer fruit ============
+// ============ viewer fruit and predators ============
 let ghost = null, pending = [];
-async function dropFruit(g) {
-  const size = ghostSize(g);
+const MAX_RELEASED = 4;   // ArenaConfig.max_spiders / max_centipedes_total
+const TOOL_TEXT = {
+  fruit: { fail: "Не удалось положить плод", late: "Плод упадёт", now: "Плод падает…" },
+  centipede: { fail: "Не удалось выпустить сороконожку", late: "Сороконожка появится", now: "Сороконожка выходит…", full: "Сороконожек уже 4 — больше нельзя" },
+  spider: { fail: "Не удалось выпустить паука", late: "Паук появится", now: "Паук спускается…", full: "Пауков уже 4 — больше нельзя" },
+};
+async function place(g) {
+  const tool = g.tool, text = TOOL_TEXT[tool], last = frames[frames.length - 1];
+  if (tool !== "fruit" && last && (tool === "spider" ? last.spiders : last.centipedes || []).length >= MAX_RELEASED) { toast(text.full); return; }
+  const body = { type: tool, x: g.x, y: g.y };
+  if (tool === "fruit") body.size = ghostSize(g);
   const r = await fetch(`/api/life/${run}/command`, { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "fruit", x: g.x, y: g.y, size }) }).catch(() => null);
-  if (!r || !r.ok) { toast("Не удалось положить плод"); return; }
-  pending.push({ x: g.x, y: g.y, size, at: performance.now(), simAt: status?.sim_s ?? 0 });
+    body: JSON.stringify(body) }).catch(() => null);
+  if (!r || !r.ok) { toast(text.fail); return; }
+  pending.push({ tool, x: g.x, y: g.y, size: body.size, at: performance.now(), simAt: status?.sim_s ?? 0,
+    known: tool === "spider" ? new Set((last?.spiders || []).map(s => s[7])) : new Set((last?.centipedes || []).map(c => c[0])) });
   const lag = status ? status.sim_s - simT : 0;
-  toast(lag > 10 ? `Плод упадёт в прямом эфире — вы смотрите запись с отставанием ${fmt(lag)}` : "Плод падает…");
+  toast(lag > 10 ? `${text.late} в прямом эфире — вы смотрите запись с отставанием ${fmt(lag)}` : text.now);
+}
+function pendingArrived(p, f) {
+  // a new animal (id not seen when the command was sent) near the spot, or a viewer apple there
+  if (p.tool === "fruit") return f.fruits.some(fr => fr[5] && Math.hypot(fr[1] - p.x, fr[2] - p.y) < 6);
+  if (p.tool === "spider") return f.spiders.some(s => !p.known.has(s[7]) && Math.hypot(s[0] - p.x, s[1] - p.y) < 20);
+  return (f.centipedes || []).some(c => !p.known.has(c[0]) && Math.hypot(c[1] - p.x, c[2] - p.y) < 20);
 }
 const ghostSize = g => Math.min(2.2, 0.4 + (performance.now() - g.start) / 900);
 
@@ -638,7 +670,7 @@ function odorSources(f) {
     out.push(["vinegar", x, y, Math.min(1, amount / ref) * (kind === "corpse" ? 0.8 : 1) * (1 - 0.5 * decay)]);
   }
   for (const [, x, y, nectar, max, grown] of f.flowers || []) if (grown >= 1) out.push(["fruit", x, y, 0.4 * Math.min(1, nectar / max)]);
-  if (f.spider) out.push(["predator", f.spider[0], f.spider[1], 0.8]);
+  for (const sp of f.spiders || []) out.push(["predator", sp[0], sp[1], 0.8]);
   for (const ce of f.centipedes || []) out.push(["predator", ce[1], ce[2], ce[8] || 1]);
   return out;
 }
@@ -770,11 +802,18 @@ function draw(now = performance.now()) {
     }
     if (byViewer) { c.strokeStyle = "rgba(240,181,76,.8)"; c.setLineDash([3, 3]); c.lineWidth = 1.5; c.beginPath(); c.arc(sx, sy, size * 1.15, 0, 7); c.stroke(); c.setLineDash([]); }
   }
-  // pending viewer fruit
-  pending = pending.filter(p => performance.now() - p.at < 90000 && !(f.fruits.some(fr => fr[5] && Math.hypot(fr[1] - p.x, fr[2] - p.y) < 6)));
+  // pending viewer fruit and animals (gone when they appear, or when the world refused: cap reached, water/stone)
+  const refused = p => events.some(e => (e.kind === "user_cap" || e.kind === "user_blocked") && e.t >= p.simAt - 2 && Math.hypot(e.x - p.x, e.y - p.y) < 20);
+  pending = pending.filter(p => performance.now() - p.at < 90000 && !pendingArrived(p, f) && !refused(p));
   for (const p of pending) { const [sx, sy] = S(p.x, p.y); c.strokeStyle = "rgba(240,181,76,.9)"; c.lineWidth = 2; c.setLineDash([4, 4]);
-    c.beginPath(); c.arc(sx, sy, (6 + 3 * Math.sin(t * 4)) * z * .9, 0, 7); c.stroke(); c.setLineDash([]); }
-  if (ghost) { const size = 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75; drawApple(c, sx, sy, size, 1); c.globalAlpha = 1; }
+    c.beginPath(); c.arc(sx, sy, ((p.tool === "fruit" ? 6 : 10) + 3 * Math.sin(t * 4)) * z * .9, 0, 7); c.stroke(); c.setLineDash([]); }
+  if (ghost) {
+    const [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75;
+    if (ghost.tool === "fruit") drawApple(c, sx, sy, 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, 1);
+    else if (ghost.tool === "spider") drawSpider(c, sx, sy, 9 * z, -Math.PI / 2, true, t);
+    else drawCentipede(c, [[ghost.x, ghost.y], [ghost.x, ghost.y + 30]], z, t, false, -Math.PI / 2);
+    c.globalAlpha = 1;
+  }
 
   // eggs
   for (const [x, y, p] of f.eggs || []) {
@@ -830,11 +869,13 @@ function draw(now = performance.now()) {
     const [sx, sy] = S(x, y); drawAnt(c, sx, sy, a[2], z, t, a[4], Math.hypot(b[0] - a[0], b[1] - a[1]) > 0.02);
   });
 
-  // spider
-  const sp = f.spider, [spx, spy] = S(sp[0], sp[1]), spn = g.spider;
-  drawSpider(c, spx, spy, 9 * z, sp[2], Math.hypot(spn[0] - sp[0], spn[1] - sp[1]) > 0.05, t);
-  if (sp[6]) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(210,235,255,.95)"; c.fillText("❄ zz", spx, spy - 6 * z); }
-  else if (sp[5] != null && sp[5] < .15) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("голоден", spx, spy - 6 * z); }
+  // spiders (old recordings: one spider without id, matched by position in the list)
+  f.spiders.forEach((sp, i) => {
+    const spn = (sp[7] != null ? g.spiders.find(q => q[7] === sp[7]) : g.spiders[i]) || sp, [spx, spy] = S(sp[0], sp[1]);
+    drawSpider(c, spx, spy, 9 * z, sp[2], Math.hypot(spn[0] - sp[0], spn[1] - sp[1]) > 0.05, t);
+    if (sp[6]) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(210,235,255,.95)"; c.fillText("❄ zz", spx, spy - 6 * z); }
+    else if (sp[5] != null && sp[5] < .15) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("голоден", spx, spy - 6 * z); }
+  });
   // centipedes
   for (const ce of f.centipedes || []) {
     const body = [[ce[1], ce[2]], ...ce[5].slice(1)];
@@ -938,6 +979,7 @@ function drawMini(f) {
   c.fillStyle = "#b07a45"; for (const fd of f.food || []) c.fillRect(fd[2] * sx - 1, fd[3] * sy - 1, 2, 2);
   for (const fl of f.flowers || []) { c.fillStyle = `hsl(${fl[7]},70%,65%)`; c.fillRect(fl[1] * sx - 1, fl[2] * sy - 1, 2.5, 2.5); }
   c.fillStyle = "#dd6a55"; for (const ce of f.centipedes || []) { c.beginPath(); c.arc(ce[1] * sx, ce[2] * sy, 3, 0, 7); c.fill(); }
+  c.fillStyle = "#a58bff"; for (const sp of f.spiders || []) { c.beginPath(); c.arc(sp[0] * sx, sp[1] * sy, 2.5, 0, 7); c.fill(); }
   c.fillStyle = "rgba(236,229,207,.75)"; for (const q of f.flies) c.fillRect(q[1] * sx - 1, q[2] * sy - 1, 2, 2);
   const me = f.flies.find(q => q[0] === selected); if (me) { c.strokeStyle = "#f0b54c"; c.lineWidth = 2; c.beginPath(); c.arc(me[1] * sx, me[2] * sy, 5, 0, 7); c.stroke(); }
   const [x0, y0] = camera.toWorld(0, 0), [x1, y1] = camera.toWorld(view.clientWidth, view.clientHeight);
