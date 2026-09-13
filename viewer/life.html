@@ -112,6 +112,8 @@
       <div><span class="sym">🐜</span>муравьи уносят еду в муравейник</div>
       <div><span class="sym">🌼</span>цветок: нектар пополняется; 🌱 росток</div>
       <div><span class="sym" style="color:#ffe066">∴</span>жёлтые точки — муха несёт пыльцу</div>
+      <div><span class="sym">🍂</span>подстилка из листьев — зимой там теплее</div>
+      <div><span class="sym">❄️</span>зима: цветы вянут, хищники и муравьи в спячке</div>
     </div>
     <p class="note" style="margin-top:10px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, прыжок — гигантское волокно DNp01,
       долгий перелёт — DNp02/DNp04/DNp11, еду — моторный нейрон хоботка MN9. Шаг и полёт исполняет модель тела: нейроны ног и крыльев лежат
@@ -150,7 +152,8 @@ const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight:
   fruit_drop: "🍎", fruit_gone: "🍂", centipede_hunt: "🐛", centipede_lost: "🐛", dropping: "💩", corpse_food: "🦠", food_gone: "🍂",
   web_start: "🕷️", web_done: "🕸️", web_gone: "🌫️", web_released: "🆓", spider_starving: "🕷️", centipede_starving: "🐛",
   centipede_arrived: "🐛", centipede_died: "💀", ant_food: "🐜", long_flight: "🪽", water_crossed: "🌊",
-  pollinated: "🌼", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀", ...DEATH_ICON };
+  pollinated: "🌼", hibernate: "❄️", wake: "🌤️", flower_sprout: "🌱", flower_grown: "🌸", flower_gone: "🥀", ...DEATH_ICON };
+const SEASON_RU = { spring: "🌱 Весна", summer: "🌻 Лето", autumn: "🍁 Осень", winter: "❄️ Зима" };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
 let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
 let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = false;
@@ -294,6 +297,21 @@ function buildGround() {
       const w = rx * 2.25 * PX, h = ry * 2.25 * PX;
       c.fillStyle = "rgba(0,0,0,.35)"; c.beginPath(); c.ellipse(w * .08, h * .12, w * .45, h * .42, 0, 0, 7); c.fill();
       c.drawImage(SPR.stone, -w / 2, -h / 2, w, h);
+    }
+    c.restore();
+  }
+  // leaf-litter shelters: heaps of fallen leaves
+  for (const [, x, y, rx, ry, a] of meta.arena.shelters || []) {
+    c.save(); c.translate(x * PX, y * PX); c.rotate(a);
+    const g = c.createRadialGradient(0, 0, 2, 0, 0, Math.max(rx, ry) * PX * 1.1);
+    g.addColorStop(0, "rgba(70,45,20,.55)"); g.addColorStop(1, "rgba(70,45,20,0)");
+    c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * PX * 1.15, ry * PX * 1.15, 0, 0, 7); c.fill();
+    const leaves = Math.round(rx * ry * 0.35);
+    for (let k = 0; k < leaves; k++) {
+      const ang = rnd() * 6.283, rr = Math.sqrt(rnd());
+      const lx = Math.cos(ang) * rx * PX * rr, ly = Math.sin(ang) * ry * PX * rr, hue = 18 + rnd() * 30, l = 22 + rnd() * 28;
+      c.fillStyle = `hsl(${hue},${45 + rnd() * 30}%,${l}%)`;
+      c.beginPath(); c.ellipse(lx, ly, 2.5 + rnd() * 3.5, 1.2 + rnd() * 1.6, rnd() * 6.283, 0, 7); c.fill();
     }
     c.restore();
   }
@@ -578,6 +596,11 @@ function draw(now = performance.now()) {
   const [gx, gy] = camera.toWorld(0, 0);
   c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H);
   c.drawImage(ground, gx * PX, gy * PX, W / z * PX, H / z * PX, 0, 0, W, H);
+  // season over the ground: autumn tint, frost when cold
+  const temp = f.temp ?? 15, season = f.season;
+  if (season === "autumn") { c.fillStyle = `rgba(160,95,30,${Math.min(.2, .03 + Math.max(0, 18 - temp) * .015)})`; c.fillRect(0, 0, W, H); }
+  const frost = Math.max(0, Math.min(.42, (6 - temp) / 14));
+  if (frost > 0) { c.fillStyle = `rgba(225,238,255,${frost})`; c.fillRect(0, 0, W, H); }
   // water ripples
   c.strokeStyle = "rgba(210,250,240,.18)"; c.lineWidth = 1;
   for (const [kind, x, y, rx, ry, a] of meta.arena.obstacles) {
@@ -696,14 +719,16 @@ function draw(now = performance.now()) {
   // spider
   const sp = f.spider, [spx, spy] = S(sp[0], sp[1]), spn = g.spider;
   drawSpider(c, spx, spy, 9 * z, sp[2], Math.hypot(spn[0] - sp[0], spn[1] - sp[1]) > 0.05, t);
-  if (sp[5] != null && sp[5] < .15) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("голоден", spx, spy - 6 * z); }
+  if (sp[6]) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(210,235,255,.95)"; c.fillText("❄ zz", spx, spy - 6 * z); }
+  else if (sp[5] != null && sp[5] < .15) { c.font = `${Math.max(10, z * 2.6)}px system-ui`; c.textAlign = "center"; c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("голоден", spx, spy - 6 * z); }
   // centipedes
   for (const ce of f.centipedes || []) {
     const body = [[ce[1], ce[2]], ...ce[5].slice(1)];
     drawCentipede(c, body, z, t, ce[4] >= 0, ce[3], ce[7], ce[8] || 1);
     const [hx, hy] = S(ce[1], ce[2]);
     c.font = `${Math.max(12, z * 3.5)}px system-ui`; c.textAlign = "center";
-    if (ce[4] >= 0) { c.fillStyle = "rgba(221,106,85,.9)"; c.fillText("!", hx, hy - 4 * z); }
+    if (ce[10]) { c.fillStyle = "rgba(210,235,255,.95)"; c.fillText("❄ zz", hx, hy - 4 * z); }
+    else if (ce[4] >= 0) { c.fillStyle = "rgba(221,106,85,.9)"; c.fillText("!", hx, hy - 4 * z); }
     else if (ce[7]) { c.fillStyle = "rgba(236,229,207,.8)"; c.fillText("zz", hx, hy - 4 * z); }
   }
 
@@ -749,15 +774,29 @@ function draw(now = performance.now()) {
   }
   // night
   if (L < .9) { c.fillStyle = `rgba(10,18,45,${Math.max(0, .6 - L * .68)})`; c.fillRect(0, 0, W, H); }
+  snow(c, W, H, temp, f.wind, playing ? dtw * +$("speed").value : 0);
 
   const lag = status ? status.sim_s - simT : 0;
   const windDir = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"][Math.round(((Math.atan2(f.wind[1], f.wind[0]) + 6.283) % 6.283) / 0.785) % 8];
-  $("clock").textContent = `${L > .55 ? "☀️ День" : L > .3 ? "🌇 Сумерки" : "🌙 Ночь"}, ${fmt(f.t)}; ветер ${windDir} ${Math.hypot(...f.wind) < .15 ? "слабый" : "заметный"}` +
+  $("clock").textContent = `${SEASON_RU[season] || ""}${f.temp != null ? ` 🌡 ${f.temp > 0 ? "+" : ""}${f.temp.toFixed(1)} °C` : ""} · ${L > .55 ? "☀️ День" : L > .3 ? "🌇 Сумерки" : "🌙 Ночь"}, ${fmt(f.t)}; ветер ${windDir} ${Math.hypot(...f.wind) < .15 ? "слабый" : "заметный"}` +
     (lag > 5 ? `; прямой эфир впереди на ${fmt(lag)}` : "");
   drawMini(f);
   panel(f, fi);
   drawnOnce = true;
   requestAnimationFrame(draw);
+}
+const flakes = [];
+function snow(c, W, H, temp, wind, dt) {
+  // occasional snowflakes when it is freezing, drifting with the wind (screen space, bounded count)
+  const want = temp < 1 ? Math.min(160, Math.round((1 - temp) * 40)) : 0;
+  while (flakes.length < want) flakes.push({ x: Math.random() * W, y: Math.random() * H, r: ri(1, 2.6), v: ri(15, 35) });
+  if (flakes.length > want) flakes.length = want;
+  c.fillStyle = "rgba(255,255,255,.85)";
+  for (const p of flakes) {
+    p.y += p.v * dt; p.x += (wind[0] * 40 + Math.sin(p.y * .05) * 8) * dt;
+    if (p.y > H) { p.y = -4; p.x = Math.random() * W; } if (p.x > W) p.x -= W; if (p.x < 0) p.x += W;
+    c.beginPath(); c.arc(p.x, p.y, p.r, 0, 7); c.fill();
+  }
 }
 function drawMini(f) {
   const m = $("mini"), dpr = devicePixelRatio || 1, W = m.clientWidth, H = m.clientHeight;
@@ -799,7 +838,7 @@ function panel(f, fi) {
   }
   const genes = (meta.genes || []).map((gname, i) => `${GENE_RU[gname]} ×${q[10][i]}`).join(", ");
   const kids = f.flies.filter(z => z[9] === selected).length, eggs = (f.eggs || []).filter(e => e[3] === selected).length;
-  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b>${q[14] ? ", несёт пыльцу" : ""}</div>` +
+  $("flyInfo").innerHTML = `<div>Возраст <b>${fmt(q[6])}</b>, сейчас <b>${STATE[q[4]]}</b>${q[14] ? ", несёт пыльцу" : ""}${q[15] != null ? `, вокруг ${q[15]} °C` : ""}</div>` +
     `<div>Поколение <b>${q[8]}</b>${q[9] >= 0 ? `, мать №${q[9]}` : ", из первых мух"}; дочерей рядом ${kids}, яиц ${eggs}</div>` +
     `<div class="note" style="margin-top:4px">Гены: ${genes}</div>`;
   $("caption").hidden = false; $("caption").innerHTML = caption(fi) || `<span class="dim">Ничего заметного за последние секунды.</span>`;

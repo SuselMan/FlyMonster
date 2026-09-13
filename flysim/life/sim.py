@@ -603,8 +603,14 @@ class Life:
             self.events.append({"t": round(self.t, 2), "fly": -1, "kind": "info", "x": None, "y": None,
                                 "text": f"буферы мозга увеличены до {b.max_spikes} спайков / {b.max_events} событий"})
 
+    def fly_temperature(self) -> np.ndarray:
+        """Local temperature (deg C) at each fly. HOOK for future physiology (cold walking, chill coma,
+        diapause, thermosensation): nothing in the body or the brain reads it yet."""
+        return np.asarray(self.arena.temperature(self.t, self.x, self.y), dtype=float).reshape(len(self.ids))
+
     def frame(self) -> dict:
-        alt = np.where(self.air_total > 0, np.sin(np.pi * np.clip(1 - self.air_left / np.maximum(self.air_total, 1e-6), 0, 1)), 0)
+        temp = self.fly_temperature()
+        alt =np.where(self.air_total > 0, np.sin(np.pi * np.clip(1 - self.air_left / np.maximum(self.air_total, 1e-6), 0, 1)), 0)
         alt = np.where(self.air_left > 0, alt * self.air_height, 0)
         return {
             **self.arena.snapshot(self.t),
@@ -617,6 +623,6 @@ class Life:
                        [int(self.read[k][i]) for k in READOUT], int(self.generation[i]), int(self.parent[i]),
                        [round(float(v), 2) for v in self.genome[i]], round(float(alt[i]), 2),
                        [round(float(v), 2) for v in self.senses[i]], round(float(self.escape_force[i]), 2),
-                       int(self.pollen[i] > 0)]
+                       int(self.pollen[i] > 0), round(float(temp[i]), 1)]
                       for i, fid in enumerate(self.ids)],
         }

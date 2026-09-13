@@ -35,11 +35,22 @@ Animals (all scripted):
 - Centipedes roam and hunt flies they see (cone) or feel (vibration). They
   age and die; new ones walk in from the map edge (1-2 alive on average).
 - Both predators have energy: they hunt/build only when hungry, and when
-  starving they slow down and rest. They never die.
+  starving they slow down and rest. The spider never dies.
 - Ants from a nest search for food, eat, carry portions home and return to
   food a nestmate found (simple recruitment). They do not harm flies.
 - Birds dive at flies in daylight. Wind slowly changes; odor plumes are
   stretched downwind. Water and stones block walking but not flying.
+
+Seasons (on top of day and night): a year (default 75 min) runs spring,
+summer, autumn, winter. Temperature (deg C) = annual cycle + daily cycle +
+microclimate: leaf-litter shelters and the ground next to stones stay a few
+degrees warmer when it is cold, the open ground is colder (analytic, no
+grids). Day length follows the season. Cold slows decomposition and
+fermentation (Q10 = 2), stops flowers from growing, refilling and setting
+seed and makes them wither faster; predators and ants hibernate below their
+threshold temperatures; birds attack less. Fly physiology does not use
+temperature yet: `temperature()` is the hook (the frame carries each fly's
+local temperature), cold effects on flies are left for later experiments.
 """
 import json
 from dataclasses import dataclass, field
@@ -58,30 +69,37 @@ class Food:
     amount: float               # sugar-equivalent units left (a fly eats ~5/s)
     amount0: float
     born: float
-    ready_at: float             # a body is not food until it has decomposed a while
-    life: float                 # s: fruit rot time; droppings/bodies: time until gone after ready
+    delay: float                # progress (s at 15 C) until it is food: a body decomposes first
+    life: float                 # s: fruit rot time, flower lifetime; droppings/bodies: time until gone after ready
     r0: float                   # mm, radius when whole
     by_viewer: bool = False
     source: int = -1            # fly id for a body, -1 otherwise
     announced: bool = False     # ants found it / a body became food (for the feed)
     ant_seen: bool = False
     hue: float = 0.0            # flowers: petal colour for the viewer
+    prog: float = 0.0           # s of fermentation/decomposition/ageing; runs faster when warm
+    grow: float = 1.0           # flowers: 0 seedling .. 1 open
 
-    def freshness(self, t: float) -> float:
+    def freshness(self, t: float = None) -> float:
         if self.kind != "fruit":
             return 0.0
-        return float(np.clip(1 - (t - self.born) / self.life, 0, 1))
+        return float(np.clip(1 - self.prog / self.life, 0, 1))
 
-    def decay(self, t: float) -> float:
-        """0 fresh .. 1 gone (time part only)."""
+    def decay(self, t: float = None) -> float:
+        """0 fresh .. 1 gone."""
         if self.kind == "flower":
-            return float(np.clip((t - self.born) / self.life, 0, 1))
+            return float(np.clip(self.prog / self.life, 0, 1))
         if self.kind == "fruit":
-            return float(np.clip((t - self.born) / (self.life * 1.6), 0, 1))
-        return float(np.clip((t - self.ready_at) / self.life, 0, 1))
+            return float(np.clip(self.prog / (self.life * 1.6), 0, 1))
+        return float(np.clip((self.prog - self.delay) / self.life, 0, 1))
 
-    def ready(self, t: float) -> bool:
-        return t >= self.ready_at
+    def ready(self, t: float = None) -> bool:
+        return self.grow >= 1.0 if self.kind == "flower" else self.prog >= self.delay
+
+    def ready_frac(self) -> float:
+        if self.kind == "flower":
+            return self.grow
+        return float(np.clip(self.prog / self.delay, 0, 1)) if self.delay > 0 else 1.0
 
     def radius(self) -> float:
         if self.kind == "flower":
@@ -99,10 +117,14 @@ class Obstacle:
     angle: float = 0.0
 
     def inside(self, px, py, pad: float = 0.0):
+        return self.rnorm(px, py, pad) < 1
+
+    def rnorm(self, px, py, pad: float = 0.0):
+        """Elliptic distance: 1 on the edge."""
         c, s = np.cos(-self.angle), np.sin(-self.angle)
         dx, dy = px - self.x, py - self.y
         u, v = dx * c - dy * s, dx * s + dy * c
-        return (u / (self.rx + pad)) ** 2 + (v / (self.ry + pad)) ** 2 < 1
+        return (u / (self.rx + pad)) ** 2 + (v / (self.ry + pad)) ** 2
 
 
 @dataclass
@@ -150,6 +172,7 @@ class Spider:
     detour: float = 1.0
     last_build: float = -1e9
     starving: bool = False
+    hibernating: bool = False
 
 
 @dataclass
@@ -172,6 +195,7 @@ class Centipede:
     energy: float = 0.5
     rest: float = 0.0          # s left of a rest bout
     starving: bool = False
+    hibernating: bool = False
 
 
 @dataclass
@@ -183,6 +207,22 @@ class ArenaConfig:
     odor_sigma: float = 30.0
     shadow_rate: float = 1 / 25.0    # bird attacks per second on the whole world (daylight)
     day_length: float = 600.0
+    # seasons and temperature
+    year_length: float = 4500.0             # s of world time per year (75 min)
+    year_start: float = 0.15                # year phase at t=0: 0 spring, .25 summer, .5 autumn, .75 winter
+    temp_mean: float = 13.0                 # deg C
+    temp_season_amp: float = 12.0           # midsummer mean + amp, midwinter mean - amp
+    temp_day_amp: float = 3.0
+    shelter_warmth: float = 4.0             # deg C warmer in leaf litter when it is cold
+    stone_warmth: float = 2.5               # next to stones when it is cold
+    open_chill: float = 1.5                 # open ground when it is cold
+    q10: float = 2.0                        # decomposition/fermentation rate x2 per 10 deg C (ref 15)
+    flower_min_temp: float = 5.0
+    flower_cold_wither: float = 2.5         # flowers age this much faster below flower_min_temp
+    spider_min_temp: float = 8.0            # hibernates below
+    centipede_min_temp: float = 6.0
+    ant_min_temp: float = 7.0
+    hibernation_metabolism: float = 0.2     # fraction of normal energy use while hibernating
     # food from the ecology
     initial_droppings: int = 5
     dropping_food: float = 70.0
@@ -238,6 +278,7 @@ class ArenaConfig:
     ant_nest_rest: float = 6.0
 
 
+SEASONS = ("spring", "summer", "autumn", "winter")
 ANT_SEARCH, ANT_TO_FOOD, ANT_EAT, ANT_HOME, ANT_NEST = range(5)
 
 
@@ -247,6 +288,7 @@ class Arena:
     rng: np.random.Generator
     food: list = field(default_factory=list)
     obstacles: list = field(default_factory=list)
+    shelters: list = field(default_factory=list)       # leaf-litter patches (walkable, warmer in cold)
     shadows: list = field(default_factory=list)
     webs: list = field(default_factory=list)
     spider: Spider | None = None
@@ -266,6 +308,7 @@ class Arena:
     ants: dict = None
     counters: dict = field(default_factory=dict)
     _food_cache: tuple = (None, None)
+    _clim: tuple = None
     _version: int = 0
 
     @staticmethod
@@ -282,6 +325,13 @@ class Arena:
             Obstacle("stone", W * 0.10, H * 0.72, 16, 16, 0.0),
             Obstacle("stone", W * 0.64, H * 0.14, 11, 11, 0.0),
         ]
+        a.shelters = [
+            Obstacle("litter", W * 0.30, H * 0.80, 30, 18, 0.3),
+            Obstacle("litter", W * 0.06, H * 0.55, 22, 34, 0.0),
+            Obstacle("litter", W * 0.72, H * 0.88, 34, 16, -0.2),
+            Obstacle("litter", W * 0.88, H * 0.40, 20, 28, 0.4),
+            Obstacle("litter", W * 0.45, H * 0.12, 30, 14, 0.1),
+        ]
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
         a.spider = Spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
         a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)
@@ -291,7 +341,8 @@ class Arena:
                   "state": np.full(n, ANT_NEST), "target": np.full(n, -1), "carry": np.zeros(n),
                   "timer": a.rng.uniform(0, 20, n), "detour": np.ones(n)}
         a.counters = {"droppings": 0, "corpse_food": 0, "webs_built": 0, "ant_trips": 0, "food_by_ants": 0.0,
-                      "centipedes_died": 0, "centipedes_arrived": 0, "pollinations": 0, "flowers_grown": 0}
+                      "centipedes_died": 0, "centipedes_arrived": 0, "pollinations": 0, "flowers_grown": 0,
+                      "hibernations": 0}
         # the world starts mid-ecology: a few old droppings, already partly dried
         for _ in range(cfg.initial_droppings):
             x, y = a.free_spot()
@@ -362,21 +413,23 @@ class Arena:
 
     # --- food -----------------------------------------------------------------
     def add_food(self, kind, t, x, y, amount, by_viewer=False, age=0.0, source=-1):
-        cfg = self.cfg
+        """age: seconds of progress already done (fermentation, decomposition, flower age)."""
+        cfg, i = self.cfg, self.next_food_id
         if kind == "fruit":
-            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age, 480.0,
-                     6.0 * float(np.sqrt(amount / 500.0)) + 1.5, by_viewer)
+            f = Food(i, kind, x, y, amount, amount, t, 0.0, 480.0, 6.0 * float(np.sqrt(amount / 500.0)) + 1.5, by_viewer)
         elif kind == "dropping":
-            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age, cfg.dropping_life, 3.0)
+            f = Food(i, kind, x, y, amount, amount, t, 0.0, cfg.dropping_life, 3.0)
         elif kind == "corpse":
-            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.corpse_delay,
-                     cfg.corpse_life, 2.5, source=source)
+            f = Food(i, kind, x, y, amount, amount, t, cfg.corpse_delay, cfg.corpse_life, 2.5, source=source)
         elif kind == "carcass":
-            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.carcass_delay,
-                     cfg.carcass_life, 7.0 * float(np.sqrt(amount / cfg.centipede_body_food)), source=source)
+            f = Food(i, kind, x, y, amount, amount, t, cfg.carcass_delay, cfg.carcass_life,
+                     7.0 * float(np.sqrt(amount / cfg.centipede_body_food)), source=source)
         else:
-            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.flower_grow,
-                     float(self.rng.uniform(*cfg.flower_life)), 4.0, hue=float(self.rng.uniform(0, 360)))
+            f = Food(i, kind, x, y, amount, amount, t, 0.0, float(self.rng.uniform(*cfg.flower_life)), 4.0,
+                     hue=float(self.rng.uniform(0, 360)))
+            f.grow = float(min(1.0, age / cfg.flower_grow))
+            f.announced = f.grow >= 1.0
+        f.prog = float(age)
         self.next_food_id += 1
         self.food.append(f)
         self._version += 1
@@ -392,7 +445,7 @@ class Arena:
         n = sum(f.kind == "flower" for f in self.food) + len(self.pending_flowers)
         if n < cfg.max_flowers and self.rng.random() < cfg.seed_chance:
             f = next((f for f in self.food if f.id == flower_id), None)
-            if f is not None:
+            if f is not None and float(self.temperature(t, f.x, f.y)) >= cfg.flower_min_temp:   # no seed set in the cold
                 for _ in range(10):
                     a, r = self.rng.uniform(0, 2 * np.pi), self.rng.uniform(15, 40)
                     x, y = f.x + r * np.cos(a), f.y + r * np.sin(a)
@@ -462,9 +515,52 @@ class Arena:
             self._event(t, "centipede_arrived", x, y, "с края карты пришла новая сороконожка")
         return c
 
+    # --- seasons ------------------------------------------------------------------
+    def year_phase(self, t: float) -> float:
+        return float((t / self.cfg.year_length + self.cfg.year_start) % 1.0)
+
+    def season(self, t: float) -> str:
+        return SEASONS[int(self.year_phase(t) * 4) % 4]
+
+    def _seasonal(self, t: float) -> float:
+        """+1 at midsummer, -1 at midwinter."""
+        return float(np.cos(2 * np.pi * (self.year_phase(t) - 0.375)))
+
     def light(self, t: float) -> float:
+        # long bright days in summer, short dim ones in winter (light > 0.55 = day: 64% vs 36% of the cycle)
         phase = (t % self.cfg.day_length) / self.cfg.day_length
-        return float(0.55 + 0.45 * np.cos(2 * np.pi * (phase - 0.25)))
+        return float(np.clip(0.55 + 0.45 * np.cos(2 * np.pi * (phase - 0.25)) + 0.2 * self._seasonal(t), 0.1, 1.0))
+
+    def air_temperature(self, t: float) -> float:
+        """Open-ground air temperature, deg C: annual + daily cycle (warmest early afternoon)."""
+        cfg = self.cfg
+        day = np.cos(2 * np.pi * ((t % cfg.day_length) / cfg.day_length - 0.3))
+        return float(cfg.temp_mean + cfg.temp_season_amp * self._seasonal(t) + cfg.temp_day_amp * day)
+
+    def temperature(self, t: float, px, py):
+        """Local temperature at points (deg C). Hook for fly physiology; cheap analytic microclimate."""
+        cfg = self.cfg
+        T = self.air_temperature(t)
+        cold = float(np.clip((12.0 - T) / 12.0, 0, 1))
+        hot = float(np.clip((T - 20.0) / 8.0, 0, 1))
+        px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+        if cold == 0 and hot == 0:
+            return np.full(px.shape, T) if px.ndim else T
+        if self._clim is None:                       # static geometry as arrays, built once
+            sh, st = self.shelters, [o for o in self.obstacles if o.kind == "stone"]
+            self._clim = tuple(np.array(v, dtype=float) for v in (
+                [o.x for o in sh], [o.y for o in sh], [np.cos(-o.angle) for o in sh], [np.sin(-o.angle) for o in sh],
+                [o.rx for o in sh], [o.ry for o in sh], [o.x for o in st], [o.y for o in st], [o.rx for o in st]))
+        sx, sy, sc, ss, srx, sry, ox, oy, orad = self._clim
+        qx, qy = px[..., None], py[..., None]
+        dx, dy = qx - sx, qy - sy
+        r = np.sqrt(((dx * sc - dy * ss) / srx) ** 2 + ((dx * ss + dy * sc) / sry) ** 2)
+        litter = np.clip((1.5 - r) / 0.5, 0, 1).max(-1)                   # 1 inside a patch, 0 beyond 1.5x its radius
+        stone = np.clip(1 - (np.hypot(qx - ox, qy - oy) - orad) / 12.0, 0, 1).max(-1)
+        cover = np.maximum(litter, 0.7 * stone)
+        out = T + cold * (cfg.shelter_warmth * litter + cfg.stone_warmth * stone * (1 - litter)) \
+            - cold * cfg.open_chill * (1 - cover) - hot * 2.0 * cover       # shade is cooler in the heat
+        return out if px.ndim else float(out)
 
     def odor(self, name: str, px: np.ndarray, py: np.ndarray, t: float) -> np.ndarray:
         """Concentration at points. Plumes are stretched downwind."""
@@ -565,7 +661,8 @@ class Arena:
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
-        if ids and self.rng.random() < cfg.shadow_rate * self.light(t) * dt:
+        bird_season = float(np.clip((self.air_temperature(t) + 5.0) / 20.0, 0.15, 1.0))    # fewer birds in winter
+        if ids and self.rng.random() < cfg.shadow_rate * self.light(t) * bird_season * dt:
             fid = ids[int(self.rng.integers(len(ids)))]
             if not any(s.target == fid for s in self.shadows):
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
@@ -594,17 +691,28 @@ class Arena:
             self.add_flower(t, item[1], item[2])
             self._event(t, "flower_sprout", item[1], item[2], "из пыльцы проклюнулся росток")
         n_flowers = 0
-        for f in self.food:
-            if f.kind == "flower":
-                n_flowers += 1
-                if f.ready(t):
-                    f.amount = min(f.amount0, f.amount + cfg.nectar_refill * dt)
-                    if not f.announced:
-                        f.announced = True
-                        if t - f.ready_at < 1.0 and f.born > 0:
-                            self.counters["flowers_grown"] += 1
-                            self._event(t, "flower_grown", f.x, f.y, "вырос новый цветок")
-        if n_flowers + len(self.pending_flowers) < 3 and self.rng.random() < cfg.wild_seed_rate * dt:
+        if self.food:
+            temp = self.temperature(t, np.array([f.x for f in self.food]), np.array([f.y for f in self.food]))
+            rate = np.clip(cfg.q10 ** ((temp - 15.0) / 10.0), 0.1, 2.5)
+        for k, f in enumerate(self.food):
+            if f.kind != "flower":
+                f.prog += dt * rate[k]
+                continue
+            n_flowers += 1
+            warm = temp[k] >= cfg.flower_min_temp
+            f.prog += dt * (1.0 if warm else cfg.flower_cold_wither)
+            if not warm:
+                continue
+            if f.grow < 1.0:
+                f.grow = min(1.0, f.grow + dt / cfg.flower_grow)
+            else:
+                f.amount = min(f.amount0, f.amount + cfg.nectar_refill * dt)
+                if not f.announced:
+                    f.announced = True
+                    self.counters["flowers_grown"] += 1
+                    self._event(t, "flower_grown", f.x, f.y, "вырос новый цветок")
+        if n_flowers + len(self.pending_flowers) < 3 and self.air_temperature(t) >= cfg.flower_min_temp \
+                and self.rng.random() < cfg.wild_seed_rate * dt:
             x, y = self.free_spot()
             self.add_flower(t, x, y)
             self._event(t, "flower_sprout", x, y, "ветер занёс семя — проклюнулся росток")
@@ -623,7 +731,7 @@ class Arena:
                 elif f.kind == "dropping":
                     self._event(t, "food_gone", f.x, f.y, "помёт съеден" if eaten else "помёт высох")
                 elif f.kind == "flower":
-                    self._event(t, "flower_gone", f.x, f.y, "цветок завял")
+                    self._event(t, "flower_gone", f.x, f.y, "цветок завял" if f.grow >= 1 else "росток погиб")
                 else:
                     self._event(t, "food_gone", f.x, f.y, "останки съедены" if eaten else "останки истлели")
 
@@ -639,6 +747,10 @@ class Arena:
     def _spider(self, t, dt, flies):
         s, cfg = self.spider, self.cfg
         ids = flies["ids"]
+        if self._hibernate(s, t, cfg.spider_min_temp, "паук"):
+            s.energy = max(0.0, s.energy - cfg.hibernation_metabolism * dt / cfg.spider_hunger_s)
+            s.target = None
+            return                                  # does not move, hunt or build (a web in progress waits)
         s.energy = max(0.0, s.energy - dt / cfg.spider_hunger_s)
         starving = s.energy < cfg.starving
         if starving and not s.starving:
@@ -699,6 +811,16 @@ class Arena:
             if site is not None:
                 s.site, s.state = site, "travel"
 
+    def _hibernate(self, p, t, min_temp, name) -> bool:
+        cold = float(self.temperature(t, p.x, p.y)) < min_temp - (0.0 if not p.hibernating else -1.0)   # 1 deg hysteresis
+        if cold != p.hibernating:
+            p.hibernating = cold
+            if cold:
+                self.counters["hibernations"] += 1
+            self._event(t, "hibernate" if cold else "wake", p.x, p.y,
+                        f"{name}: холодно — оцепенение, спячка" if cold else f"{name}: потеплело — проснулся")
+        return cold
+
     def _finish_build(self, t, interrupted=False):
         s = self.spider
         w = self.web(s.web)
@@ -746,6 +868,10 @@ class Arena:
         cfg = self.cfg
         ids, fx, fy = flies["ids"], flies["x"], flies["y"]
         c.age += dt
+        if self._hibernate(c, t, cfg.centipede_min_temp, "сороконожка"):
+            c.energy = max(0.0, c.energy - cfg.hibernation_metabolism * dt / cfg.centipede_hunger_s)
+            c.target, c.starved_for = None, 0.0
+            return
         c.energy = max(0.0, c.energy - dt / cfg.centipede_hunger_s)
         c.starved_for = c.starved_for + dt if c.energy <= 0 else 0.0
         starving = c.energy < cfg.starving
@@ -806,10 +932,15 @@ class Arena:
         fid = np.array([f.id for f in self.food], dtype=int)
         by_id = {f.id: k for k, f in enumerate(self.food)}
         st = A["state"]
+        cold = self.air_temperature(t) < cfg.ant_min_temp       # the colony stays in the nest
+        if cold:
+            st[(st == ANT_SEARCH) | (st == ANT_TO_FOOD) | (st == ANT_EAT)] = ANT_HOME
         # rare transitions in a small loop (a handful of ants)
         for a in range(n):
             s = st[a]
             if s == ANT_NEST:
+                if cold:
+                    continue
                 A["timer"][a] -= dt
                 if A["timer"][a] <= 0:
                     k = by_id.get(self.nest_known)
@@ -898,26 +1029,28 @@ class Arena:
         s, A = self.spider, self.ants
         return {
             "t": round(t, 3), "light": round(self.light(t), 3), "wind": [round(float(v), 2) for v in self.wind],
+            "season": self.season(t), "year_phase": round(self.year_phase(t), 4), "temp": round(self.air_temperature(t), 1),
             # fruits: [id, x, y, amount, freshness, by_viewer, amount_whole]
             "fruits": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount), round(f.freshness(t), 2), int(f.by_viewer),
                         round(f.amount0)] for f in self.food if f.kind == "fruit"],
             # food: droppings and bodies [id, kind, x, y, amount, amount_whole, ready 0..1, decay 0..1, source]
             "food": [[f.id, f.kind, round(f.x, 1), round(f.y, 1), round(f.amount, 1), round(f.amount0),
-                      round(float(np.clip(1 - (f.ready_at - t) / (f.ready_at - f.born or 1), 0, 1)), 2), round(f.decay(t), 2),
+                      round(f.ready_frac(), 2), round(f.decay(t), 2),
                       f.source] for f in self.food if f.kind not in ("fruit", "flower")],
             # flowers: [id, x, y, nectar, nectar_max, grown 0..1, wither 0..1, hue]
             "flowers": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount, 1), round(f.amount0),
-                         round(float(np.clip(1 - (f.ready_at - t) / self.cfg.flower_grow, 0, 1)), 2), round(f.decay(t), 2),
+                         round(f.grow, 2), round(f.decay(t), 2),
                          round(f.hue)] for f in self.food if f.kind == "flower"],
             "shadows": [[sh.target, round((t - sh.t_start) / sh.duration, 3), round(sh.direction, 2)] for sh in self.shadows],
             # webs: [id, x, y, radius, strength, build]
             "webs": [[w.id, round(w.x, 1), round(w.y, 1), round(w.radius(), 1), round(w.strength, 2), round(w.build, 2)]
                      for w in self.webs],
             "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1,
-                       s.state, round(s.energy, 2)],
-            # centipedes: [id, x, y, heading, target, body points, energy, resting, size, age/lifespan]
+                       s.state, round(s.energy, 2), int(s.hibernating)],
+            # centipedes: [id, x, y, heading, target, body points, energy, resting, size, age/lifespan, hibernating]
             "centipedes": [[c.id, round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
-                            c.body[::12], round(c.energy, 2), int(c.rest > 0), round(c.size, 2), round(c.age / c.lifespan, 2)]
+                            c.body[::12], round(c.energy, 2), int(c.rest > 0), round(c.size, 2), round(c.age / c.lifespan, 2),
+                            int(c.hibernating)]
                            for c in self.centipedes],
             # ants: [x, y, heading, state, carrying]
             "ants": [[round(float(A["x"][a]), 1), round(float(A["y"][a]), 1), round(float(A["h"][a]), 2), int(A["state"][a]),
@@ -929,4 +1062,6 @@ class Arena:
         return {"width": self.cfg.width, "height": self.cfg.height, "odor_sigma": self.cfg.odor_sigma,
                 "day_length": self.cfg.day_length, "odor_ref": self.cfg.odor_ref,
                 "obstacles": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.obstacles],
-                "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "max_webs": self.cfg.max_webs}
+                "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "max_webs": self.cfg.max_webs,
+                "shelters": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.shelters],
+                "year_length": self.cfg.year_length, "year_start": self.cfg.year_start, "seasons": list(SEASONS)}

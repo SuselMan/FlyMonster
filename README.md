@@ -75,6 +75,16 @@ connectome and the published LIF model. Around it:
   and rest when starving); ants forage and carry food home; birds dive in
   daylight. Flies perceive all of them only through vision salience, looming,
   odor and touch. Tuning numbers are ours (ArenaConfig).
+- **Centipedes and flowers**: centipedes age and starve to death, their large
+  bodies decompose into food, newcomers walk in from the map edge. Flowers hold
+  refilling nectar (the "fruit" odorant at lower strength). Pollen is fly body
+  state: feeding on a different flower pollinates it and may sprout a seedling.
+- **Seasons**: a 75-minute year on top of day/night. Temperature = annual +
+  daily cycle + analytic microclimate (leaf-litter shelters and stones warmer
+  in the cold, open ground colder). Cold slows decomposition (Q10 = 2), stops
+  flowers, makes predators and ants hibernate, reduces birds. Flies do not
+  react to temperature yet: `Arena.temperature()` / `Life.fly_temperature()`
+  are the hooks, and each fly row in the frame carries its local temperature.
 - **Flight metrics** (long flights, landing across water) are counted for
   checking, they do not trigger anything.
 
