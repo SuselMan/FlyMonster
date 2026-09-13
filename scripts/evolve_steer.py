@@ -107,7 +107,7 @@ def main():
     input_idx = torch.cat([w.sense_idx, olf.input_idx, wind.input_idx, compass.input_idx])
     n_s, n_o, n_w = len(w.sense_idx), len(olf.input_idx), len(wind.input_idx)
     brain = FastBrain(model, B, params, input_idx, torch.tensor(read_idx, device=dev), w.npf_idx,
-                      steps=round(DT * 1000 / params.dt), max_spikes=64 * B, max_events=11_000 * B)
+                      steps=round(DT * 1000 / params.dt), max_spikes=256 * B, max_events=40_000 * B)
     brain.bias.fill_(HUNGER)
     gi = {n: i for i, n in enumerate(w.group_names)}
     fruit = olf.names.index("fruit")
