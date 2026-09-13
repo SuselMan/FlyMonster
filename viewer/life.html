@@ -157,7 +157,7 @@ async function refresh() {
     sel.value = run;
   }
   if (!run) return;
-  if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta) { buildGround(); camera.reset(); } }
+  if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta?.arena.obstacles) { await spritesReady; buildGround(); camera.reset(); } }
   if (!meta || !meta.arena.obstacles) return;
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
   if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
@@ -253,45 +253,34 @@ const ghostSize = g => Math.min(2.2, 0.4 + (performance.now() - g.start) / 900);
 // ============ ground (pre-rendered once, 2 px per mm) ============
 let ground = null;
 const PX = 2;
+const SPR = {};
+const spritesReady = Promise.all(["grass", "lake", "stone", "apple", "apple_rotten"].map(name => new Promise(res => {
+  const img = new Image(); img.onload = img.onerror = () => res(); img.src = `/viewer/sprites/${name}.png`; SPR[name] = img;
+})));
 function buildGround() {
   const W = meta.arena.width * PX, H = meta.arena.height * PX;
   ground = document.createElement("canvas"); ground.width = W; ground.height = H;
   const c = ground.getContext("2d");
   let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  const base = c.createLinearGradient(0, 0, W, H); base.addColorStop(0, "#5a4f36"); base.addColorStop(0.5, "#62583a"); base.addColorStop(1, "#4f4a31");
-  c.fillStyle = base; c.fillRect(0, 0, W, H);
-  for (let k = 0; k < 90; k++) {   // moss patches
-    const x = rnd() * W, y = rnd() * H, r = 30 + rnd() * 120;
-    const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, `rgba(92,120,62,${0.25 + rnd() * 0.25})`); g.addColorStop(1, "rgba(92,120,62,0)");
+  c.imageSmoothingEnabled = false;                          // keep the pixel-art crisp
+  const TILE = 160;                                          // 80 mm of world per grass tile
+  for (let y = 0; y < H; y += TILE) for (let x = 0; x < W; x += TILE) c.drawImage(SPR.grass, x, y, TILE, TILE);
+  for (let k = 0; k < 60; k++) {                             // gentle light and shade so the tiling does not read as a grid
+    const x = rnd() * W, y = rnd() * H, r = 80 + rnd() * 220, dark = rnd() < 0.5;
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, dark ? `rgba(20,30,10,${0.18 + rnd() * 0.15})` : `rgba(230,220,150,${0.06 + rnd() * 0.08})`); g.addColorStop(1, "rgba(0,0,0,0)");
     c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
-  }
-  for (let k = 0; k < 9000; k++) {   // grain
-    const x = rnd() * W, y = rnd() * H, v = rnd();
-    c.fillStyle = v < 0.5 ? `rgba(30,24,14,${0.08 + rnd() * 0.12})` : `rgba(210,195,150,${0.04 + rnd() * 0.08})`;
-    c.fillRect(x, y, 1 + rnd() * 2, 1 + rnd() * 2);
-  }
-  for (let k = 0; k < 420; k++) {   // fallen leaves
-    const x = rnd() * W, y = rnd() * H, len = 8 + rnd() * 20, hue = 25 + rnd() * 25;
-    c.save(); c.translate(x, y); c.rotate(rnd() * 6.28);
-    c.fillStyle = `hsla(${hue},${45 + rnd() * 20}%,${28 + rnd() * 15}%,0.55)`;
-    c.beginPath(); c.moveTo(-len, 0); c.quadraticCurveTo(0, -len * 0.45, len, 0); c.quadraticCurveTo(0, len * 0.45, -len, 0); c.fill();
-    c.strokeStyle = "rgba(40,28,12,.35)"; c.lineWidth = 1; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke(); c.restore();
   }
   for (const [kind, x, y, rx, ry, a] of meta.arena.obstacles) {
     c.save(); c.translate(x * PX, y * PX); c.rotate(a);
     if (kind === "water") {
-      c.fillStyle = "rgba(40,30,18,.45)"; c.beginPath(); c.ellipse(0, 0, rx * PX + 10, ry * PX + 10, 0, 0, 7); c.fill();   // wet shore
-      const g = c.createRadialGradient(-rx * PX * .2, -ry * PX * .3, 4, 0, 0, Math.max(rx, ry) * PX);
-      g.addColorStop(0, "#6fd0c3"); g.addColorStop(0.55, "#2f8f8a"); g.addColorStop(1, "#1d5a5e");
-      c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * PX, ry * PX, 0, 0, 7); c.fill();
-      c.strokeStyle = "rgba(200,245,235,.35)"; c.lineWidth = 2; c.beginPath(); c.ellipse(0, 0, rx * PX - 3, ry * PX - 3, 0, 3.6, 5.4); c.stroke();
+      // the open water fills ~80% of the lake sprite; the rest is its grassy shore
+      const w = rx * 2 * PX / 0.8, h = ry * 2 * PX / 0.8;
+      c.drawImage(SPR.lake, -w / 2, -h / 2, w, h);
     } else {
-      c.fillStyle = "rgba(0,0,0,.35)"; c.beginPath(); c.ellipse(8, 10, rx * PX, ry * PX, 0, 0, 7); c.fill();
-      const g = c.createRadialGradient(-rx * PX * .35, -ry * PX * .4, 2, 0, 0, Math.max(rx, ry) * PX * 1.1);
-      g.addColorStop(0, "#c9c5b6"); g.addColorStop(0.5, "#8f8b7c"); g.addColorStop(1, "#56534a");
-      c.fillStyle = g; c.beginPath();
-      for (let k = 0; k <= 16; k++) { const t = k / 16 * 6.283, j = 0.88 + 0.12 * Math.sin(k * 2.7 + x); c.lineTo(Math.cos(t) * rx * PX * j, Math.sin(t) * ry * PX * j); }
-      c.fill(); c.fillStyle = "rgba(120,150,80,.35)"; c.beginPath(); c.ellipse(-rx * PX * .3, ry * PX * .35, rx * PX * .35, ry * PX * .2, 0.4, 0, 7); c.fill();
+      const w = rx * 2.25 * PX, h = ry * 2.25 * PX;
+      c.fillStyle = "rgba(0,0,0,.35)"; c.beginPath(); c.ellipse(w * .08, h * .12, w * .45, h * .42, 0, 0, 7); c.fill();
+      c.drawImage(SPR.stone, -w / 2, -h / 2, w, h);
     }
     c.restore();
   }
@@ -326,7 +315,16 @@ function fruitSprite(fresh) {
     c.fillStyle = rot > 0.5 ? "#6d6a3a" : "#6fb341"; c.beginPath(); c.ellipse(m + 18, m - 50, 14, 6, -0.5, 0, 7); c.fill();
   });
 }
-const FRUITS = Array.from({ length: 6 }, (_, i) => fruitSprite(1 - i / 5));
+function drawApple(c, x, y, size, fresh) {
+  // fresh apple fades into the rotten one as it ferments
+  const a = c.globalAlpha, smooth = c.imageSmoothingEnabled;
+  c.imageSmoothingEnabled = false;
+  c.fillStyle = `rgba(0,0,0,${0.28 * a})`; c.beginPath(); c.ellipse(x + size * .12, y + size * .55, size * .75, size * .3, 0, 0, 7); c.fill();
+  const w = size * 1.85, h = size * 2;
+  if (fresh < 1) { c.drawImage(SPR.apple_rotten, x - w / 2, y - h / 2, w, h); }
+  if (fresh > 0) { c.globalAlpha = a * Math.min(1, fresh * 1.6); c.drawImage(SPR.apple, x - w / 2, y - h / 2, w, h); c.globalAlpha = a; }
+  c.imageSmoothingEnabled = smooth;
+}
 const EGG = sprite(48, (c) => {
   const g = c.createLinearGradient(12, 10, 36, 38); g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#d9d2bd");
   c.translate(24, 24); c.rotate(0.6); c.fillStyle = "rgba(0,0,0,.25)"; c.beginPath(); c.ellipse(3, 3, 8, 17, 0, 0, 7); c.fill();
@@ -477,7 +475,7 @@ function draw(now = performance.now()) {
     const rad = 6 * Math.sqrt(Math.max(sugar, 60) / 500), size = rad * z * 1.45 * (0.6 + 0.4 * Math.min(1, sugar / 500));
     const [sx, sy] = S(x, y), drop = (1 - fall) * 60;
     if (fall < 1) { c.fillStyle = `rgba(0,0,0,${0.3 * fall})`; c.beginPath(); c.ellipse(sx, sy, size * fall, size * .7 * fall, 0, 0, 7); c.fill(); }
-    c.drawImage(FRUITS[Math.round((1 - fresh) * 5)], sx - size, sy - size - drop, size * 2, size * 2);
+    drawApple(c, sx, sy - drop, size, fresh);
     if (!smellMode && fresh < 0.5) {   // fermentation bubbles
       c.fillStyle = "rgba(220,240,160,.55)";
       for (let b = 0; b < 3; b++) { const ph = (t * .6 + b / 3) % 1; c.beginPath(); c.arc(sx + (b - 1) * size * .35, sy - size * .3 - ph * size * .8, 1 + z * .25 * (1 - ph), 0, 7); c.fill(); }
@@ -488,7 +486,7 @@ function draw(now = performance.now()) {
   pending = pending.filter(p => performance.now() - p.at < 90000 && !(f.fruits.some(fr => fr[5] && Math.hypot(fr[1] - p.x, fr[2] - p.y) < 6)));
   for (const p of pending) { const [sx, sy] = S(p.x, p.y); c.strokeStyle = "rgba(240,181,76,.9)"; c.lineWidth = 2; c.setLineDash([4, 4]);
     c.beginPath(); c.arc(sx, sy, (6 + 3 * Math.sin(t * 4)) * z * .9, 0, 7); c.stroke(); c.setLineDash([]); }
-  if (ghost) { const size = 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75; c.drawImage(FRUITS[0], sx - size, sy - size, size * 2, size * 2); c.globalAlpha = 1; }
+  if (ghost) { const size = 6 * Math.sqrt(ghostSize(ghost)) * z * 1.45, [sx, sy] = S(ghost.x, ghost.y); c.globalAlpha = .75; drawApple(c, sx, sy, size, 1); c.globalAlpha = 1; }
 
   // eggs
   for (const [x, y, p] of f.eggs || []) { const [sx, sy] = S(x, y), s = 2.4 * z * (1 + .08 * Math.sin(t * 3 + x)); c.drawImage(EGG, sx - s, sy - s, s * 2, s * 2); }

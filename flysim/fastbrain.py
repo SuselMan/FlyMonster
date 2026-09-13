@@ -1,0 +1,200 @@
+"""Whole-brain LIF simulation replayed as a CUDA graph.
+
+Same equations as brain.FlyBrain (without short-term depression), but every
+tensor has a fixed shape and nothing waits for the CPU, so a block of steps
+can be captured once and replayed with a single call:
+
+- spike delivery uses fixed-size buffers (at most `max_spikes` spiking
+  neurons and `max_events` synaptic events per step, across the batch);
+  an overflow flag is kept on the GPU and checked once per block;
+- the batch size is fixed; unused columns simply receive no input.
+
+Replaying removes the per-operation launch and synchronisation overhead,
+which dominates when activity is sparse.
+"""
+import math
+
+import torch
+
+from .brain import _LIF_KERNEL as _LIF
+from .config import LIFParams
+from .connectome import Connectome
+
+if _LIF is not None:
+    import cupy
+
+    # Spike delivery, step 1: one short GPU thread per synaptic event. Event e
+    # finds its spike j by binary search in the cumulative synapse counts and
+    # writes (flat target index, weight). Step 2 (torch index_add_) adds the
+    # buffer into g, which is race-free.
+    _FILL = cupy.RawKernel(r"""
+    extern "C" __global__ void fill(const long long* pre, const long long* col, const long long* off,
+                                    const long long* crow, const long long* post, const float* w,
+                                    long long* tgt, float* wout, const int k, const int batch, const long long emax) {
+        long long e = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+        if (e >= emax) return;
+        if (e >= off[k - 1]) { wout[e] = 0; tgt[e] = 0; return; }
+        int lo = 0, hi = k - 1;                       // first j with off[j] > e
+        while (lo < hi) { int mid = (lo + hi) / 2; if (off[mid] > e) hi = mid; else lo = mid + 1; }
+        long long before = lo > 0 ? off[lo - 1] : 0;
+        long long s = crow[pre[lo]] + (e - before);
+        tgt[e] = post[s] * batch + col[lo];
+        wout[e] = w[s];
+    }
+    """, "fill")
+else:
+    _FILL = None
+
+
+class FastBrain:
+    def __init__(self, connectome: Connectome, batch: int, params: LIFParams, input_idx: torch.Tensor,
+                 read_idx: torch.Tensor, bias_idx: torch.Tensor, steps: int = 20,
+                 max_spikes: int = 4096, max_events: int = 400_000, device: str = "cuda", use_kernel: bool = True):
+        assert params.std_u == 0, "short-term depression is not supported in the graph path"
+        self.p = p = params
+        self.dev = torch.device(device)
+        self.n, self.batch, self.steps = connectome.n, batch, steps
+        self.delay_steps = max(1, round(p.t_dly / p.dt))
+        assert steps % self.delay_steps == 0, "block length must be a multiple of the synaptic delay"
+        self.refrac_steps = max(1, round(p.t_rfc / p.dt))
+        self.k_mbr = p.dt / p.t_mbr
+        self.g_decay = math.exp(-p.dt / p.tau)
+        self.max_spikes, self.max_events = max_spikes, max_events
+        w = connectome.weights
+        crow = w.crow_indices().to(self.dev)
+        self.crow = torch.cat([crow, crow[-1:]])            # extra row: padding "neuron" n has no synapses
+        self.post = w.col_indices().to(self.dev)
+        self.w = (w.values() * p.w_syn).to(self.dev)
+        self.nnz = self.w.numel()
+        self.input_idx, self.read_idx, self.bias_idx = input_idx.to(self.dev), read_idx.to(self.dev), bias_idx.to(self.dev)
+        shape = (self.n, batch)
+        self.v = torch.full(shape, p.v_0, device=self.dev)
+        self.g = torch.zeros(shape, device=self.dev)
+        self.refrac = torch.zeros(shape, dtype=torch.int16, device=self.dev)
+        self.spike_buf = torch.zeros((self.delay_steps, *shape), dtype=torch.bool, device=self.dev)
+        self.events = torch.arange(max_events, device=self.dev)
+        # static inputs and outputs of the graph
+        self.rates = torch.zeros(len(self.input_idx), batch, device=self.dev)
+        self.bias = torch.zeros(batch, device=self.dev)          # added to g of bias neurons each step (mV)
+        self.counts = torch.zeros(len(self.read_idx), batch, device=self.dev)
+        self.overflow = torch.zeros((), device=self.dev)
+        self.graph = None
+        self.use_kernel = _LIF is not None and use_kernel
+        if self.use_kernel:
+            self._cp = cupy.from_dlpack
+            self._cp_v, self._cp_g = cupy.from_dlpack(self.v), cupy.from_dlpack(self.g)
+            self._cp_gflat = cupy.from_dlpack(self.g.view(-1))
+            self._cp_r = cupy.from_dlpack(self.refrac)
+            self._cp_s = [cupy.from_dlpack(self.spike_buf[s]) for s in range(self.delay_steps)]
+            self._cp_crow, self._cp_post = cupy.from_dlpack(self.crow), cupy.from_dlpack(self.post)
+            self._cp_w = cupy.from_dlpack(self.w)
+            self._alloc_events()
+
+    def _alloc_events(self):
+        self.events = torch.arange(self.max_events, device=self.dev)
+        if self.use_kernel:
+            self.ev_tgt = torch.zeros(self.max_events, dtype=torch.long, device=self.dev)
+            self.ev_w = torch.zeros(self.max_events, device=self.dev)
+            self._cp_tgt, self._cp_wout = cupy.from_dlpack(self.ev_tgt), cupy.from_dlpack(self.ev_w)
+
+    # --- one step, fixed shapes, no host synchronisation ---------------------
+    def _step(self, slot: int):
+        p, B, n = self.p, self.batch, self.n
+        if self.use_kernel:
+            arriving = self.spike_buf[slot].reshape(-1)
+            flat = torch.nonzero_static(arriving, size=self.max_spikes, fill_value=n * B).squeeze(1)
+            pre, col = flat // B, flat % B
+            cnt = self.crow[pre + 1] - self.crow[pre]
+            off = torch.cumsum(cnt, 0)
+            K, E = self.max_spikes, self.max_events
+            _FILL(((E + 1023) // 1024,), (1024,), (self._cp(pre), self._cp(col), self._cp(off), self._cp_crow,
+                                                    self._cp_post, self._cp_w, self._cp_tgt, self._cp_wout,
+                                                    cupy.int32(K), cupy.int32(B), cupy.int64(E)))
+            self.g.view(-1).index_add_(0, self.ev_tgt, self.ev_w)
+            # overflow: more events than the buffer, or the spike list is full (its last entry is real)
+            self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(
+                (off[-1] > E).float(), (flat[-1] < n * B).float())))
+            return self._integrate(slot)
+        arriving = self.spike_buf[slot].reshape(-1)
+        flat = torch.nonzero_static(arriving, size=self.max_spikes, fill_value=n * B).squeeze(1)
+        pre, col = flat // B, flat % B
+        start = self.crow[pre]
+        cnt = self.crow[pre + 1] - start
+        off = torch.cumsum(cnt, 0)
+        total = off[-1]
+        j = torch.searchsorted(off, self.events, right=True).clamp(max=self.max_spikes - 1)
+        syn = (start[j] + self.events - (off[j] - cnt[j])).clamp(max=self.nnz - 1)
+        valid = self.events < total
+        self.g.view(-1).index_add_(0, self.post[syn] * B + col[j], self.w[syn] * valid)
+        self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(
+            (total > self.max_events).float(), (arriving.sum() > self.max_spikes).float())))
+        return self._integrate(slot)
+
+    def _integrate(self, slot: int):
+        p = self.p
+        hits = torch.rand_like(self.rates) < self.rates * (p.dt * 1e-3)
+        self.g.index_add_(0, self.input_idx, hits * (p.f_poi * p.w_syn))
+        if len(self.bias_idx):
+            self.g[self.bias_idx] += self.bias * (p.dt / p.tau)
+
+        spikes = self.spike_buf[slot]
+        if self.use_kernel:
+            # the fused CuPy kernel, launched on torch's current stream so the graph records it
+            _LIF(p.v_0, self.k_mbr, self.g_decay, p.v_th, p.v_rst, self.refrac_steps,
+                 self._cp_v, self._cp_g, self._cp_r, self._cp_s[slot])
+            return spikes
+        active = self.refrac <= 0
+        self.v.add_((p.v_0 - self.v + self.g) * self.k_mbr * active)
+        self.g.mul_(torch.where(active, self.g_decay, 1.0))
+        new = self.v > p.v_th
+        self.v.masked_fill_(new, p.v_rst)
+        self.g.masked_fill_(new, 0.0)
+        self.refrac.sub_(1).clamp_(min=0).masked_fill_(new, self.refrac_steps)
+        spikes.copy_(new)
+        return spikes
+
+    def _block(self):
+        self.counts.zero_()
+        stream = cupy.cuda.ExternalStream(torch.cuda.current_stream().cuda_stream) if self.use_kernel else None
+        if stream is not None:
+            stream.use()
+        for s in range(self.steps):
+            spikes = self._step(s % self.delay_steps)
+            self.counts += spikes[self.read_idx]
+
+    def capture(self):
+        side = torch.cuda.Stream()
+        with torch.cuda.stream(side):
+            for _ in range(3):
+                self._block()
+        torch.cuda.current_stream().wait_stream(side)
+        self.reset_all()
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            self._block()
+        self.reset_all()
+
+    def run_eager(self):
+        """Same block without the graph (for timing comparisons)."""
+        self._block()
+
+    def run(self):
+        """Advance `steps` steps; spike counts of readout neurons land in self.counts."""
+        if self.graph is None:
+            self.capture()
+        self.graph.replay()
+
+    # --- state management (outside the graph, in place) ----------------------
+    def reset_all(self):
+        self.v.fill_(self.p.v_0)
+        self.g.zero_()
+        self.refrac.zero_()
+        self.spike_buf.zero_()
+        self.overflow.zero_()
+
+    def reset_columns(self, cols):
+        cols = torch.as_tensor(cols, device=self.dev, dtype=torch.long)
+        self.v[:, cols] = self.p.v_0
+        self.g[:, cols] = 0
+        self.refrac[:, cols] = 0
+        self.spike_buf[:, :, cols] = False

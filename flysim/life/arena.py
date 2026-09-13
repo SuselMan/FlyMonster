@@ -118,14 +118,15 @@ class Arena:
     def create(cfg: ArenaConfig, seed: int) -> "Arena":
         a = Arena(cfg, np.random.default_rng(seed))
         W, H = cfg.width, cfg.height
+        # proportions follow the viewer sprites (lake ~1.15:1, stones roughly round)
         a.obstacles = [
-            Obstacle("water", W * 0.52, H * 0.55, 70, 38, 0.3),
-            Obstacle("water", W * 0.18, H * 0.25, 38, 24, -0.5),
-            Obstacle("stone", W * 0.35, H * 0.72, 16, 12, 0.2),
-            Obstacle("stone", W * 0.78, H * 0.28, 22, 15, 1.0),
-            Obstacle("stone", W * 0.82, H * 0.78, 13, 11, 0.0),
-            Obstacle("stone", W * 0.12, H * 0.70, 18, 12, 0.7),
-            Obstacle("stone", W * 0.62, H * 0.18, 12, 9, -0.4),
+            Obstacle("water", W * 0.52, H * 0.55, 72, 60, 0.0),
+            Obstacle("water", W * 0.17, H * 0.24, 40, 34, 0.0),
+            Obstacle("stone", W * 0.35, H * 0.74, 14, 14, 0.0),
+            Obstacle("stone", W * 0.80, H * 0.27, 19, 19, 0.0),
+            Obstacle("stone", W * 0.84, H * 0.80, 12, 12, 0.0),
+            Obstacle("stone", W * 0.10, H * 0.72, 16, 16, 0.0),
+            Obstacle("stone", W * 0.64, H * 0.14, 11, 11, 0.0),
         ]
         a.spider = Spider(W * 0.30, H * 0.42, 22.0)
         a.spider.x, a.spider.y = a.spider.home_x, a.spider.home_y
@@ -179,17 +180,21 @@ class Arena:
         sig = self.cfg.odor_sigma
 
         def plume(sx, sy, amount, sigma):
-            dx, dy = px - sx, py - sy
+            if np.ndim(sx):
+                dx, dy = px[..., None] - sx, py[..., None] - sy
+            else:
+                dx, dy = px - sx, py - sy
             along, cross = dx * ux + dy * uy, -dx * uy + dy * ux
             s_along = np.where(along > 0, sigma * (1 + 2.5 * ws), sigma)   # longer downwind
             return amount * np.exp(-(along ** 2) / (2 * s_along ** 2) - cross ** 2 / (2 * sigma ** 2))
 
         if name in ("fruit", "vinegar"):
-            for f in self.fruits:
-                fr = f.freshness(t)
-                amount = f.strength() * (fr if name == "fruit" else (1 - fr) * 1.2)
-                if amount > 0.01:
-                    c += plume(f.x, f.y, amount, sig)
+            if self.fruits:   # all fruits at once: sources along a trailing axis
+                fx = np.array([f.x for f in self.fruits])
+                fy = np.array([f.y for f in self.fruits])
+                fr = np.array([f.freshness(t) for f in self.fruits])
+                amount = np.array([f.strength() for f in self.fruits]) * (fr if name == "fruit" else (1 - fr) * 1.2)
+                c = plume(fx, fy, amount, sig).sum(-1)
         elif name == "spider":
             c += plume(self.spider.home_x, self.spider.home_y, 0.8, sig * 0.7)
         elif name == "centipede":

@@ -23,7 +23,8 @@ CHUNK_S = 10.0
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="first")
-    ap.add_argument("--flies", type=int, default=24)
+    ap.add_argument("--flies", type=int, default=6)
+    ap.add_argument("--max-flies", type=int, default=None, help="brain slots (population cap), default flies + 2")
     ap.add_argument("--minutes", type=float, default=60.0)
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
@@ -36,7 +37,7 @@ def main():
     for name in ("events.jsonl", "commands.jsonl"):
         (out / name).unlink(missing_ok=True)
 
-    cfg = LifeConfig(n_flies=args.flies, seed=args.seed)
+    cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed)
     life = Life(cfg)
     (out / "meta.json").write_text(json.dumps({
         "arena": life.arena.static(), "readout": list(READOUT), "genes": list(GENES), "senses": list(SENSES),

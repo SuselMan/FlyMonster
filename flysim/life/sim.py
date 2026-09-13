@@ -29,6 +29,7 @@ import torch
 from .. import connectome, neurons
 from ..body import dn_reach
 from ..brain import FlyBrain
+from ..fastbrain import FastBrain
 from ..physiology import DEFAULT, Physiology, apply, neuron_meta
 from ..senses import Olfaction
 from .arena import Arena, ArenaConfig
@@ -95,11 +96,20 @@ class Life:
         self.meta = neuron_meta(self.con)
         model = apply(self.con, cfg.physiology, self.meta)
         B = cfg.n_flies
-        self.brain = FlyBrain(model, batch=B, params=cfg.physiology.lif(), device=device)
-        self.dev = self.brain.device
-        self.steps_per_world = round(WORLD_DT * 1000 / self.brain.p.dt)
+        # Brains live in a fixed batch of max_flies slots; flies take and free slots.
+        self.dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        params = cfg.physiology.lif()
+        self.steps_per_world = round(WORLD_DT * 1000 / params.dt)
         self._wire()
-        self.olf = Olfaction(self.meta, B, self.dev)
+        self.olf = Olfaction(self.meta, cfg.max_flies, self.dev)
+        self.input_idx = torch.cat([self.sense_idx, self.olf.input_idx])
+        if self.dev.type == "cuda" and params.std_u == 0:
+            self.brain = FastBrain(model, cfg.max_flies, params, self.input_idx, self.read_idx, self.npf_idx,
+                                   steps=self.steps_per_world, max_spikes=64 * cfg.max_flies, max_events=11_000 * cfg.max_flies)
+        else:
+            self.brain = FlyBrain(model, batch=cfg.max_flies, params=params, device=self.dev)
+        self.free_slots = list(range(cfg.max_flies))
+        self._pending = None
         self.arena = Arena.create(cfg.arena, cfg.seed)
         self.t = 0.0
         self.ids, self.next_id = [], 0
@@ -109,14 +119,13 @@ class Life:
         self.births = 0
         self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "air_left", "air_total", "air_speed",
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
-                         "generation", "parent", "stuck", "escape_force", "touch_left", "genome", "senses")
+                         "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
         self.read = {k: np.zeros(0) for k in READOUT}
         xs, ys = zip(*[self.arena.free_spot() for _ in range(B)])
-        self._append(np.array(xs), np.array(ys), np.ones((B, len(GENES))), np.zeros(B), np.full(B, -1),
-                     brains_exist=True)
+        self._append(np.array(xs), np.array(ys), np.ones((B, len(GENES))), np.zeros(B), np.full(B, -1))
 
     # --- wiring ---------------------------------------------------------------
     def _wire(self):
@@ -162,12 +171,12 @@ class Life:
         self.npf_idx = torch.tensor(np.flatnonzero(np.char.find(ct.astype(str), "NPF") >= 0), device=self.dev)
 
     # --- population -----------------------------------------------------------
-    def _append(self, xs, ys, genomes, generations, parents, brains_exist=False):
+    def _append(self, xs, ys, genomes, generations, parents):
         n = len(xs)
-        if not brains_exist:
-            self.brain.add(n)
-            self.olf.add(n)
+        slots = [self.free_slots.pop(0) for _ in range(n)]
+        self._reset_slots(slots)
         new = {c: np.zeros(n) for c in self._columns}
+        new["slot"] = np.array(slots, dtype=float)
         new.update({"x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
                     "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "jumped_at": np.full(n, -1e9),
                     "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
@@ -182,7 +191,7 @@ class Life:
 
     def _hatch(self):
         ready = [e for e in self.eggs if self.t - e.laid >= self.cfg.hatch_time]
-        room = self.cfg.max_flies - len(self.ids)
+        room = len(self.free_slots)
         for e in ready[:max(room, 0)]:
             self.eggs.remove(e)
             genome = e.genome * np.exp(self.rng.normal(0, self.cfg.mutation, len(GENES)))
@@ -201,19 +210,38 @@ class Life:
         if not self.ids:
             return
         light = self.arena.light(self.t)
+        slots = torch.tensor(self.slot.astype(np.int64), device=self.dev)
         g = torch.tensor(self.genome, dtype=torch.float32, device=self.dev)
-        rates = self._sensory_rates(light)
-        olf_rates = self._olfaction() * g[:, GENES.index("smell")]
-        idx = torch.cat([self.sense_idx, self.olf.input_idx])
-        all_rates = torch.cat([rates, olf_rates])
-        hunger = torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)
-        npf_drive = 4.0 * hunger * g[:, GENES.index("hunger")] * (self.brain.p.dt / self.brain.p.tau)
-        counts = torch.zeros(len(self.read_idx), len(self.ids), device=self.dev)
-        for _ in range(self.steps_per_world):
-            if len(self.npf_idx):
-                self.brain.g[self.npf_idx] += npf_drive
-            counts += self.brain.step(idx, all_rates)[self.read_idx]
+        rates = torch.zeros(len(self.input_idx), self.cfg.max_flies, device=self.dev)
+        rates[:len(self.sense_idx), slots] = self._sensory_rates(light)
+        rates[len(self.sense_idx):] = self._olfaction()
+        rates[len(self.sense_idx):, slots] *= g[:, GENES.index("smell")]
+        bias = torch.zeros(self.cfg.max_flies, device=self.dev)
+        bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)             * g[:, GENES.index("hunger")]
+        if isinstance(self.brain, FastBrain):
+            # CPU and GPU overlap: the body uses the block that finished while the
+            # CPU was preparing this step (one extra 10 ms of sensorimotor delay).
+            if self._pending is None:
+                self._pending_host = torch.zeros(self.brain.counts.shape, pin_memory=True)
+            else:
+                self._pending.synchronize()
+            prev = self._pending_host.clone()
+            self.brain.rates.copy_(rates)
+            self.brain.bias.copy_(bias)
+            self.brain.run()
+            self._pending_host.copy_(self.brain.counts, non_blocking=True)
+            self._pending = torch.cuda.Event()
+            self._pending.record()
+            counts = prev[:, slots.cpu()].to(self.dev)
+        else:
+            counts = torch.zeros(len(self.read_idx), self.cfg.max_flies, device=self.dev)
+            for _ in range(self.steps_per_world):
+                if len(self.npf_idx):
+                    self.brain.g[self.npf_idx] += bias * (self.brain.p.dt / self.brain.p.tau)
+                counts += self.brain.step(self.input_idx, rates)[self.read_idx]
+            counts = counts[:, slots]
         hz = ((self.read_mix @ counts) / WORLD_DT).cpu().numpy()
+        self._check_overflow()
         a = WORLD_DT / READ_TAU
         for r, k in enumerate(READOUT):
             self.read[k] += (hz[r] - self.read[k]) * a
@@ -303,7 +331,9 @@ class Life:
         self.senses[:, 0:2] = conc[:, n.index("fruit"), :]
         self.senses[:, 2:4] = conc[:, n.index("vinegar"), :]
         self.senses[:, 4] = conc[:, n.index("spider"), :].max(1)
-        return self.olf.rates(torch.from_numpy(conc).to(self.dev), WORLD_DT * 1000)
+        full = np.zeros((self.cfg.max_flies, *conc.shape[1:]), dtype=np.float32)
+        full[self.slot.astype(np.int64)] = conc
+        return self.olf.rates(torch.from_numpy(full).to(self.dev), WORLD_DT * 1000)
 
     def _body(self, light: float):
         cfg, dt, ar = self.cfg, WORLD_DT, self.arena
@@ -469,12 +499,38 @@ class Life:
         if keep.all():
             return
         cols = np.flatnonzero(keep)
-        self.brain.keep(torch.tensor(cols, device=self.dev))
-        self.olf.keep(torch.tensor(cols, device=self.dev))
+        freed = [int(s) for s in self.slot[~keep]]
+        self._reset_slots(freed)
+        self.free_slots.extend(freed)
         for c in self._columns:
             setattr(self, c, getattr(self, c)[cols])
         self.read = {k: v[cols] for k, v in self.read.items()}
         self.ids = [fid for fid, k in zip(self.ids, keep) if k]
+
+    def _reset_slots(self, slots):
+        if not slots:
+            return
+        if isinstance(self.brain, FastBrain):
+            self.brain.reset_columns(slots)
+        else:
+            mask = torch.zeros(self.cfg.max_flies, dtype=torch.bool, device=self.dev)
+            mask[slots] = True
+            self.brain.reset(mask)
+        self.olf.state[slots] = 0
+
+    def _check_overflow(self):
+        # the graph path drops spikes if its fixed buffers overflow: grow them and re-record
+        if isinstance(self.brain, FastBrain) and float(self.brain.overflow) > 0:
+            b = self.brain
+            b.max_spikes, b.max_events = b.max_spikes * 2, b.max_events * 2
+            b._alloc_events()
+            b.overflow.zero_()
+            state = [t.clone() for t in (b.v, b.g, b.refrac, b.spike_buf)]
+            b.capture()
+            for dst, src in zip((b.v, b.g, b.refrac, b.spike_buf), state):
+                dst.copy_(src)
+            self.events.append({"t": round(self.t, 2), "fly": -1, "kind": "info", "x": None, "y": None,
+                                "text": f"буферы мозга увеличены до {b.max_spikes} спайков / {b.max_events} событий"})
 
     def frame(self) -> dict:
         alt = np.where(self.air_total > 0, np.sin(np.pi * np.clip(1 - self.air_left / np.maximum(self.air_total, 1e-6), 0, 1)), 0)
