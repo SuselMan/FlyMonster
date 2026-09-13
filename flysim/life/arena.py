@@ -702,7 +702,7 @@ class Arena:
         n_flowers = 0
         if self.food:
             temp = self.temperature(t, np.array([f.x for f in self.food]), np.array([f.y for f in self.food]))
-            rate = np.clip(cfg.q10 ** ((temp - 15.0) / 10.0), 0.1, 2.5)
+            rate = np.clip(cfg.q10 ** ((temp - 15.0) / 10.0), 0.1, 1.6)
         for k, f in enumerate(self.food):
             if f.kind != "flower":
                 f.prog += dt * rate[k]

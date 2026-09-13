@@ -26,7 +26,8 @@ flysim/
   senses.py        sensory transducers (olfaction: saturation, adaptation)
   explorer.py      backend of the brain explorer
   flappy*.py       Flappy Fly
-  life/            the arena world: arena.py (food, spider, birds, day/night), sim.py (flies)
+  life/            the arena world: arena.py (food ecology, flowers, spider webs, centipedes, ants,
+                   birds, day/night, seasons, temperature), sim.py (flies)
   world.py body.py team.py   maze experiment
 scripts/
   physiology_scan.py  scan overrides against assays
