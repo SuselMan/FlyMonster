@@ -270,17 +270,30 @@ const ghostSize = g => Math.min(2.2, 0.4 + (performance.now() - g.start) / 900);
 let ground = null;
 const PX = 2;
 const SPR = {};
-const spritesReady = Promise.all(["grass", "lake", "stone", "apple", "apple_rotten", "spider", "web", "centipede_head", "centipede_body", "centipede_tail", "egg"].map(name => new Promise(res => {
+const SEASON_KEYS = ["spring", "summer", "autumn", "winter"];
+const spritesReady = Promise.all(["grass", "lake", "stone", "apple", "apple_rotten", "spider", "web", "centipede_head", "centipede_body", "centipede_tail", "egg",
+  "grass_spring", "grass_summer", "grass_autumn", "grass_winter", "lake_frozen", "stone_snow", "litter_spring", "litter_summer", "litter_autumn", "litter_winter", "nest", "nest_winter"].map(name => new Promise(res => {
   const img = new Image(); img.onload = img.onerror = () => res(); img.src = `/viewer/sprites/${name}.png`; SPR[name] = img;
 })));
+const has = name => SPR[name] && SPR[name].complete && SPR[name].naturalWidth > 0;
+// one pre-rendered ground per season; the draw loop crossfades them at season ends
+const grounds = {};
 function buildGround() {
+  for (const season of SEASON_KEYS) grounds[season] = buildSeasonGround(season);
+  ground = grounds.summer;
+  buildMini();
+}
+function buildSeasonGround(season) {
   const W = meta.arena.width * PX, H = meta.arena.height * PX;
-  ground = document.createElement("canvas"); ground.width = W; ground.height = H;
-  const c = ground.getContext("2d");
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const c = cv.getContext("2d");
+  const grass = has(`grass_${season}`) ? SPR[`grass_${season}`] : SPR.grass;
+  const stone = season === "winter" && has("stone_snow") ? SPR.stone_snow : SPR.stone;
+  const litter = has(`litter_${season}`) ? SPR[`litter_${season}`] : null;
   let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   c.imageSmoothingEnabled = false;                          // keep the pixel-art crisp
   const TILE = 160;                                          // 80 mm of world per grass tile
-  for (let y = 0; y < H; y += TILE) for (let x = 0; x < W; x += TILE) c.drawImage(SPR.grass, x, y, TILE, TILE);
+  for (let y = 0; y < H; y += TILE) for (let x = 0; x < W; x += TILE) c.drawImage(grass, x, y, TILE, TILE);
   for (let k = 0; k < 60; k++) {                             // gentle light and shade so the tiling does not read as a grid
     const x = rnd() * W, y = rnd() * H, r = 80 + rnd() * 220, dark = rnd() < 0.5;
     const g = c.createRadialGradient(x, y, 0, x, y, r);
@@ -296,13 +309,17 @@ function buildGround() {
     } else {
       const w = rx * 2.25 * PX, h = ry * 2.25 * PX;
       c.fillStyle = "rgba(0,0,0,.35)"; c.beginPath(); c.ellipse(w * .08, h * .12, w * .45, h * .42, 0, 0, 7); c.fill();
-      c.drawImage(SPR.stone, -w / 2, -h / 2, w, h);
+      c.drawImage(stone, -w / 2, -h / 2, w, h);
     }
     c.restore();
   }
   // leaf-litter shelters: heaps of fallen leaves
   for (const [, x, y, rx, ry, a] of meta.arena.shelters || []) {
     c.save(); c.translate(x * PX, y * PX); c.rotate(a);
+    if (litter) {
+      const w = rx * 2.3 * PX, h = ry * 2.3 * PX;
+      c.drawImage(litter, -w / 2, -h / 2, w, h); c.restore(); continue;
+    }
     const g = c.createRadialGradient(0, 0, 2, 0, 0, Math.max(rx, ry) * PX * 1.1);
     g.addColorStop(0, "rgba(70,45,20,.55)"); g.addColorStop(1, "rgba(70,45,20,0)");
     c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * PX * 1.15, ry * PX * 1.15, 0, 0, 7); c.fill();
@@ -317,6 +334,12 @@ function buildGround() {
   }
   // ant hill: a mound of crumbs with a dark entrance
   const [nx, ny] = meta.arena.nest;
+  const nest = season === "winter" && has("nest_winter") ? SPR.nest_winter : has("nest") ? SPR.nest : null;
+  if (nest) {
+    const w = 36 * PX, h = w * nest.height / nest.width;
+    c.drawImage(nest, nx * PX - w / 2, ny * PX - h / 2, w, h);
+    return cv;
+  }
   c.save(); c.translate(nx * PX, ny * PX);
   const mound = c.createRadialGradient(-4, -4, 2, 0, 0, 16 * PX);
   mound.addColorStop(0, "#a07b4e"); mound.addColorStop(0.7, "#6e5232"); mound.addColorStop(1, "rgba(80,60,35,0)");
@@ -324,7 +347,7 @@ function buildGround() {
   c.fillStyle = "rgba(190,160,110,.7)"; for (let k = 0; k < 40; k++) { const a = rnd() * 6.283, r = rnd() * 11 * PX; c.fillRect(Math.cos(a) * r, Math.sin(a) * r, 2, 2); }
   c.fillStyle = "#1c140c"; c.beginPath(); c.ellipse(0, 0, 3 * PX, 2.2 * PX, 0.3, 0, 7); c.fill();
   c.restore();
-  buildMini();
+  return cv;
 }
 let miniBase = null;
 function buildMini() {
@@ -595,11 +618,18 @@ function draw(now = performance.now()) {
   // ground
   const [gx, gy] = camera.toWorld(0, 0);
   c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H);
-  c.drawImage(ground, gx * PX, gy * PX, W / z * PX, H / z * PX, 0, 0, W, H);
+  // seasonal ground: the last 20% of a season fades into the next one
+  const yp = (f.year_phase ?? 0.3) * 4, si = Math.floor(yp) % 4, sq = yp - Math.floor(yp);
+  c.drawImage(grounds[SEASON_KEYS[si]] || ground, gx * PX, gy * PX, W / z * PX, H / z * PX, 0, 0, W, H);
+  if (sq > 0.8) {
+    c.globalAlpha = (sq - 0.8) / 0.2;
+    c.drawImage(grounds[SEASON_KEYS[(si + 1) % 4]] || ground, gx * PX, gy * PX, W / z * PX, H / z * PX, 0, 0, W, H);
+    c.globalAlpha = 1;
+  }
   // season over the ground: autumn tint, frost when cold
   const temp = f.temp ?? 15, season = f.season;
-  if (season === "autumn") { c.fillStyle = `rgba(160,95,30,${Math.min(.2, .03 + Math.max(0, 18 - temp) * .015)})`; c.fillRect(0, 0, W, H); }
-  const frost = Math.max(0, Math.min(.42, (6 - temp) / 14));
+  if (season === "autumn" && !has("grass_autumn")) { c.fillStyle = `rgba(160,95,30,${Math.min(.2, .03 + Math.max(0, 18 - temp) * .015)})`; c.fillRect(0, 0, W, H); }
+  const frost = Math.max(0, Math.min(has("grass_winter") ? .15 : .42, (6 - temp) / 14));
   if (frost > 0) { c.fillStyle = `rgba(225,238,255,${frost})`; c.fillRect(0, 0, W, H); }
   // water ripples; ice sheet when ponds freeze (f.ice >= 1 means flies can walk on it)
   const ice = Math.min(1, f.ice ?? 0);
@@ -609,17 +639,23 @@ function draw(now = performance.now()) {
     if (ice > 0) {
       const [sx, sy] = S(x, y);
       c.save(); c.translate(sx, sy); c.rotate(a);
-      c.globalAlpha = ice * (f.ice >= 1 ? .9 : .55);
-      const g = c.createRadialGradient(0, 0, 0, 0, 0, Math.max(rx, ry) * z);
-      g.addColorStop(0, "#e9f4f8"); g.addColorStop(.7, "#cfe3ec"); g.addColorStop(1, "#b4d0dc");
-      c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * z, ry * z, 0, 0, 7); c.fill();
-      if (f.ice >= 1) {
-        c.strokeStyle = "rgba(120,150,170,.45)"; c.lineWidth = Math.max(.6, z * .25);
-        for (let k = 0; k < 6; k++) {       // cracks, fixed per lake
-          const ang = k * 1.9 + x * .13, r0 = .15 + (k * .37 + y * .01) % .3;
-          c.beginPath(); c.moveTo(Math.cos(ang) * rx * r0 * z, Math.sin(ang) * ry * r0 * z);
-          c.lineTo(Math.cos(ang + .25) * rx * .55 * z, Math.sin(ang + .25) * ry * .55 * z);
-          c.lineTo(Math.cos(ang + .1) * rx * .85 * z, Math.sin(ang + .1) * ry * .85 * z); c.stroke();
+      if (has("lake_frozen")) {         // same geometry as the lake sprite in the ground
+        c.globalAlpha = ice;
+        const w = rx * 2 * z / 0.8, h = ry * 2 * z / 0.8;
+        c.drawImage(SPR.lake_frozen, -w / 2, -h / 2, w, h);
+      } else {
+        c.globalAlpha = ice * (f.ice >= 1 ? .9 : .55);
+        const g = c.createRadialGradient(0, 0, 0, 0, 0, Math.max(rx, ry) * z);
+        g.addColorStop(0, "#e9f4f8"); g.addColorStop(.7, "#cfe3ec"); g.addColorStop(1, "#b4d0dc");
+        c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx * z, ry * z, 0, 0, 7); c.fill();
+        if (f.ice >= 1) {
+          c.strokeStyle = "rgba(120,150,170,.45)"; c.lineWidth = Math.max(.6, z * .25);
+          for (let k = 0; k < 6; k++) {       // cracks, fixed per lake
+            const ang = k * 1.9 + x * .13, r0 = .15 + (k * .37 + y * .01) % .3;
+            c.beginPath(); c.moveTo(Math.cos(ang) * rx * r0 * z, Math.sin(ang) * ry * r0 * z);
+            c.lineTo(Math.cos(ang + .25) * rx * .55 * z, Math.sin(ang + .25) * ry * .55 * z);
+            c.lineTo(Math.cos(ang + .1) * rx * .85 * z, Math.sin(ang + .1) * ry * .85 * z); c.stroke();
+          }
         }
       }
       c.restore(); c.globalAlpha = 1;
