@@ -15,15 +15,25 @@ Food ecology (every food item has a cause and a finite amount):
 - Every item has an amount that shrinks while flies and ants eat it; its
   size, odor strength and taste follow the remaining amount. Leftovers rot
   (fruit), dry out (droppings) or decay (bodies) and disappear.
-- The world starts with a few old droppings so the first flies are not born
-  into an empty world (again a choice, not a measurement).
+- Centipedes that die (starvation or age) leave a large body: food scales
+  with body size (fly body small, centipede body large, droppings small).
+- Flowers (scripted plants) hold a little nectar that slowly refills. Nectar
+  uses the "fruit" odorant at lower strength (sweet, fruity), a choice to
+  avoid inventing a new receptor profile. A fly that fed on one flower
+  carries its pollen (body state, not brain); feeding on another flower
+  pollinates it, and with some chance a seedling sprouts nearby later.
+  Flowers wither after their lifetime; their number is bounded, and when
+  very few are left wind-blown seeds sprout on their own.
+- The world starts with a few old droppings and some flowers so the first
+  flies are not born into an empty world (again a choice, not a measurement).
 
 Animals (all scripted):
 - A spider builds webs where flies walk often (running heatmap of fly
   positions) or near food, spends seconds building, waits, and walks to flies
   stuck on any of its webs. Webs age: strength, stickiness radius and
   visibility fade until they disappear. At most `max_webs` at a time.
-- A centipede roams and hunts flies it sees (cone) or feels (vibration).
+- Centipedes roam and hunt flies they see (cone) or feel (vibration). They
+  age and die; new ones walk in from the map edge (1-2 alive on average).
 - Both predators have energy: they hunt/build only when hungry, and when
   starving they slow down and rest. They never die.
 - Ants from a nest search for food, eat, carry portions home and return to
@@ -36,13 +46,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-KINDS = ("fruit", "dropping", "corpse")
+KINDS = ("fruit", "dropping", "corpse", "carcass", "flower")   # carcass: a dead centipede
 
 
 @dataclass
 class Food:
     id: int
-    kind: str                   # "fruit" | "dropping" | "corpse"
+    kind: str                   # see KINDS
     x: float
     y: float
     amount: float               # sugar-equivalent units left (a fly eats ~5/s)
@@ -55,6 +65,7 @@ class Food:
     source: int = -1            # fly id for a body, -1 otherwise
     announced: bool = False     # ants found it / a body became food (for the feed)
     ant_seen: bool = False
+    hue: float = 0.0            # flowers: petal colour for the viewer
 
     def freshness(self, t: float) -> float:
         if self.kind != "fruit":
@@ -63,6 +74,8 @@ class Food:
 
     def decay(self, t: float) -> float:
         """0 fresh .. 1 gone (time part only)."""
+        if self.kind == "flower":
+            return float(np.clip((t - self.born) / self.life, 0, 1))
         if self.kind == "fruit":
             return float(np.clip((t - self.born) / (self.life * 1.6), 0, 1))
         return float(np.clip((t - self.ready_at) / self.life, 0, 1))
@@ -71,6 +84,8 @@ class Food:
         return t >= self.ready_at
 
     def radius(self) -> float:
+        if self.kind == "flower":
+            return self.r0
         return self.r0 * (0.5 + 0.5 * np.sqrt(max(self.amount, 0) / self.amount0))
 
 
@@ -139,9 +154,14 @@ class Spider:
 
 @dataclass
 class Centipede:
+    id: int
     x: float
     y: float
     heading: float
+    lifespan: float = 2000.0
+    size: float = 1.0          # body scale; food of its body scales with it
+    age: float = 0.0
+    starved_for: float = 0.0
     target: int | None = None
     body: list = field(default_factory=list)   # trailing points for drawing
     wander_speed: float = 10.0
@@ -183,17 +203,37 @@ class ArenaConfig:
     spider_meal: float = 0.6
     spider_hungry: float = 0.75             # builds webs below this energy
     # centipede
-    centipede_hunger_s: float = 500.0
-    centipede_meal: float = 0.6
-    centipede_hungry: float = 0.6           # hunts below this energy
+    centipede_hunger_s: float = 900.0
+    centipede_meal: float = 0.5
+    centipede_hungry: float = 0.45          # hunts below this energy
     starving: float = 0.15                  # predators slow down and rest below this
+    centipede_lifespan: tuple = (1500.0, 2700.0)
+    centipede_starve_death: float = 150.0   # s at zero energy until it dies
+    centipede_body_food: float = 300.0      # x body size
+    carcass_delay: float = 60.0
+    carcass_life: float = 600.0
+    max_centipedes: int = 2
+    centipede_arrival: float = 1 / 1500.0   # per s, while one is alive and there is room
+    centipede_refill: tuple = (60.0, 180.0) # s until a newcomer when none is alive
+    # flowers
+    initial_flowers: int = 6
+    max_flowers: int = 10
+    nectar_max: float = 30.0
+    nectar_refill: float = 0.15             # units/s (empty -> full in ~3 min)
+    flower_odor: float = 0.4                # fraction of fruit-odor strength
+    flower_life: tuple = (1500.0, 3000.0)
+    flower_grow: float = 60.0               # s a seedling needs to open
+    seed_chance: float = 0.35               # per pollination
+    seed_delay: tuple = (40.0, 90.0)        # s until the seedling sprouts
+    wild_seed_rate: float = 1 / 300.0       # per s, only while fewer than 3 flowers
+    pollen_life: float = 900.0              # s pollen stays on a fly
     # ants
-    n_ants: int = 6
+    n_ants: int = 4
     ant_speed: float = 16.0
     ant_carry_speed: float = 11.0
     ant_sense: float = 45.0                 # mm, finds food by smell/sight within this range
-    ant_bite: float = 12.0                  # units carried per trip
-    ant_eat_rate: float = 4.0               # units/s while taking a portion
+    ant_bite: float = 8.0                   # units carried per trip
+    ant_eat_rate: float = 3.0               # units/s while taking a portion
     ant_search: float = 90.0                # s of searching before returning home empty
     ant_nest_rest: float = 6.0
 
@@ -210,12 +250,15 @@ class Arena:
     shadows: list = field(default_factory=list)
     webs: list = field(default_factory=list)
     spider: Spider | None = None
-    centipede: Centipede | None = None
+    centipedes: list = field(default_factory=list)
+    next_centipede_id: int = 0
+    no_centipede_since: float = 0.0
+    pending_flowers: list = field(default_factory=list)     # (t_due, x, y)
     wind: np.ndarray = field(default_factory=lambda: np.zeros(2))
     next_food_id: int = 0
     next_web_id: int = 0
     log: list = field(default_factory=list)     # world events for the feed
-    pending_droppings: list = field(default_factory=list)   # (t_due, predator)
+    pending_droppings: list = field(default_factory=list)   # (t_due, predator object)
     heat: np.ndarray = None
     nest: tuple = (0.0, 0.0)
     nest_food: float = 0.0
@@ -241,17 +284,21 @@ class Arena:
         ]
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
         a.spider = Spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
-        a.centipede = Centipede(W * 0.85, H * 0.55, float(a.rng.uniform(-np.pi, np.pi)))
+        a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)
         a.nest = (W * 0.93, H * 0.08)
         n = cfg.n_ants
         a.ants = {"x": np.full(n, a.nest[0]), "y": np.full(n, a.nest[1]), "h": a.rng.uniform(-np.pi, np.pi, n),
                   "state": np.full(n, ANT_NEST), "target": np.full(n, -1), "carry": np.zeros(n),
                   "timer": a.rng.uniform(0, 20, n), "detour": np.ones(n)}
-        a.counters = {"droppings": 0, "corpse_food": 0, "webs_built": 0, "ant_trips": 0, "food_by_ants": 0.0}
+        a.counters = {"droppings": 0, "corpse_food": 0, "webs_built": 0, "ant_trips": 0, "food_by_ants": 0.0,
+                      "centipedes_died": 0, "centipedes_arrived": 0, "pollinations": 0, "flowers_grown": 0}
         # the world starts mid-ecology: a few old droppings, already partly dried
         for _ in range(cfg.initial_droppings):
             x, y = a.free_spot()
             a.add_food("dropping", 0.0, x, y, cfg.dropping_food, age=float(a.rng.uniform(0, 150)))
+        for _ in range(cfg.initial_flowers):
+            x, y = a.free_spot()
+            a.add_flower(0.0, x, y, age=float(a.rng.uniform(cfg.flower_grow, 600)))
         # the spider starts with one finished web at its first spot
         w = Web(a.next_web_id, a.spider.x, a.spider.y, float(np.mean(cfg.web_radius)), 0.0, 1.0, 0.0)
         a.next_web_id += 1
@@ -321,13 +368,38 @@ class Arena:
                      6.0 * float(np.sqrt(amount / 500.0)) + 1.5, by_viewer)
         elif kind == "dropping":
             f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age, cfg.dropping_life, 3.0)
-        else:
+        elif kind == "corpse":
             f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.corpse_delay,
                      cfg.corpse_life, 2.5, source=source)
+        elif kind == "carcass":
+            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.carcass_delay,
+                     cfg.carcass_life, 7.0 * float(np.sqrt(amount / cfg.centipede_body_food)), source=source)
+        else:
+            f = Food(self.next_food_id, kind, x, y, amount, amount, t - age, t - age + cfg.flower_grow,
+                     float(self.rng.uniform(*cfg.flower_life)), 4.0, hue=float(self.rng.uniform(0, 360)))
         self.next_food_id += 1
         self.food.append(f)
         self._version += 1
         return f
+
+    def add_flower(self, t, x, y, age=0.0):
+        return self.add_food("flower", t, x, y, self.cfg.nectar_max, age=age)
+
+    def pollinated(self, t, flower_id, pollen_from, fly_x, fly_y):
+        """A fly carrying pollen fed on another flower: maybe a seedling sprouts nearby later."""
+        cfg = self.cfg
+        self.counters["pollinations"] += 1
+        n = sum(f.kind == "flower" for f in self.food) + len(self.pending_flowers)
+        if n < cfg.max_flowers and self.rng.random() < cfg.seed_chance:
+            f = next((f for f in self.food if f.id == flower_id), None)
+            if f is not None:
+                for _ in range(10):
+                    a, r = self.rng.uniform(0, 2 * np.pi), self.rng.uniform(15, 40)
+                    x, y = f.x + r * np.cos(a), f.y + r * np.sin(a)
+                    if 10 < x < cfg.width - 10 and 10 < y < cfg.height - 10 and not self.blocked(x, y, pad=6):
+                        self.pending_flowers.append((t + float(self.rng.uniform(*cfg.seed_delay)), float(x), float(y)))
+                        return True
+        return False
 
     def drop_fruit(self, t: float, x, y, sugar=None, by_viewer=True):
         f = self.add_food("fruit", t, float(x), float(y), float(sugar or self.cfg.fruit_sugar), by_viewer=by_viewer)
@@ -347,13 +419,15 @@ class Arena:
         decay = np.array([f.decay(t) for f in F])
         kind = np.array([KINDS.index(f.kind) for f in F], dtype=int)
         s = np.clip(amount / self.cfg.odor_ref, 0, 1) * ready
-        scale = np.where(kind == 0, 1.0, np.where(kind == 1, 1.0, 0.8)) * np.where(kind == 0, 1.0, 1 - 0.5 * decay)
+        flower = kind == 4
+        scale = np.where(kind == 2, 0.8, 1.0) * np.where(kind == 0, 1.0, 1 - 0.5 * decay)
         out = {
             "x": np.array([f.x for f in F], dtype=float), "y": np.array([f.y for f in F], dtype=float),
             "r": np.array([f.radius() for f in F], dtype=float), "amount": amount, "kind": kind,
             "edible": ready & (amount > 0.5),
-            "fruit": s * fresh, "vinegar": s * (1 - fresh) * np.where(kind == 0, 1.2, 1.0) * scale,
-            "taste": np.clip(amount / 20.0, 0, 1) * ready,
+            "fruit": np.where(flower, np.clip(amount / self.cfg.nectar_max, 0, 1) * self.cfg.flower_odor * ready, s * fresh),
+            "vinegar": np.where(flower, 0.0, s * (1 - fresh) * np.where(kind == 0, 1.2, 1.0) * scale),
+            "taste": np.clip(amount / np.where(flower, 10.0, 20.0), 0, 1) * ready,
         }
         self._food_cache = (key, out)
         return out
@@ -364,11 +438,29 @@ class Arena:
             px, py = self.near_free(x, y)
             self.add_food("corpse", t, px, py, self.cfg.corpse_food, source=fid)
 
-    def predator_ate(self, who: str, t: float):
+    def predator_ate(self, p, t: float):
         cfg = self.cfg
-        p = self.spider if who == "spider" else self.centipede
-        p.energy = min(1.0, p.energy + (cfg.spider_meal if who == "spider" else cfg.centipede_meal))
-        self.pending_droppings.append((t + float(self.rng.uniform(*cfg.dropping_delay)), who))
+        p.energy = min(1.0, p.energy + (cfg.spider_meal if p is self.spider else cfg.centipede_meal))
+        self.pending_droppings.append((t + float(self.rng.uniform(*cfg.dropping_delay)), p))
+
+    def spawn_centipede(self, t, x=None, y=None, announce=True):
+        cfg = self.cfg
+        W, H = cfg.width, cfg.height
+        if x is None:
+            for _ in range(50):          # walk in from a random map edge
+                side = int(self.rng.integers(4))
+                u = float(self.rng.uniform(0.1, 0.9))
+                x, y = [(12, u * H), (W - 12, u * H), (u * W, 12), (u * W, H - 12)][side]
+                if not self.blocked(x, y, pad=6):
+                    break
+        c = Centipede(self.next_centipede_id, float(x), float(y), float(np.arctan2(H / 2 - y, W / 2 - x)),
+                      lifespan=float(self.rng.uniform(*cfg.centipede_lifespan)), size=float(self.rng.uniform(0.8, 1.2)))
+        self.next_centipede_id += 1
+        self.centipedes.append(c)
+        if announce:
+            self.counters["centipedes_arrived"] += 1
+            self._event(t, "centipede_arrived", x, y, "с края карты пришла новая сороконожка")
+        return c
 
     def light(self, t: float) -> float:
         phase = (t % self.cfg.day_length) / self.cfg.day_length
@@ -398,7 +490,8 @@ class Arena:
         elif name == "spider":
             c += plume(self.spider.x, self.spider.y, 0.8, sig * 0.7)
         elif name == "centipede":
-            c += plume(self.centipede.x, self.centipede.y, 1.0, sig * 0.6)
+            for cp in self.centipedes:
+                c += plume(cp.x, cp.y, 1.0 * cp.size, sig * 0.6)
         return c
 
     # --- webs -------------------------------------------------------------------
@@ -442,6 +535,8 @@ class Arena:
             ok &= np.hypot(cx - w.x, cy - w.y) > w.r + r + 6
         if not ok.any():
             return None
+        # a spider walks ~6 mm/s: far sites cost it
+        score = score - 0.4 * np.hypot(cx - self.spider.x, cy - self.spider.y) / max(cfg.width, cfg.height)
         score = np.where(ok, score + 0.05 * self.rng.random(len(score)), -np.inf)
         top = np.argsort(-score)[:5]
         top = top[np.isfinite(score[top])]
@@ -466,7 +561,7 @@ class Arena:
             gx = np.clip((np.asarray(flies["x"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[1] - 1)
             gy = np.clip((np.asarray(flies["y"])[walk] / cfg.heat_cell).astype(int), 0, self.heat.shape[0] - 1)
             np.add.at(self.heat, (gy, gx), dt)
-        self._food_update(t)
+        self._food_update(t, dt)
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
@@ -476,27 +571,50 @@ class Arena:
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
         self._webs(t, dt)
         self._spider(t, dt, flies)
-        self._centipede(t, dt, flies)
+        for c in list(self.centipedes):
+            self._centipede(c, t, dt, flies)
+        self._centipede_population(t, dt)
         self._ants(t, dt)
 
     def _event(self, t, kind, x, y, text):
         self.log.append({"t": round(t, 2), "kind": kind, "x": round(float(x)), "y": round(float(y)), "text": text})
 
-    def _food_update(self, t):
+    def _food_update(self, t, dt):
         cfg = self.cfg
-        for due, who in [p for p in self.pending_droppings if p[0] <= t]:
-            self.pending_droppings.remove((due, who))
-            p = self.spider if who == "spider" else self.centipede
+        for item in [q for q in self.pending_droppings if q[0] <= t]:
+            self.pending_droppings.remove(item)
+            p = item[1]
             x, y = self.near_free(p.x, p.y)
             self.add_food("dropping", t, x, y, cfg.dropping_food)
             self.counters["droppings"] += 1
-            self._event(t, "dropping", x, y, "паук оставил помёт — еда" if who == "spider" else "сороконожка оставила помёт — еда")
+            self._event(t, "dropping", x, y, "паук оставил помёт — еда" if p is self.spider else "сороконожка оставила помёт — еда")
+        # flowers: seedlings sprout, nectar refills, wind-blown seeds when few are left
+        for item in [q for q in self.pending_flowers if q[0] <= t]:
+            self.pending_flowers.remove(item)
+            self.add_flower(t, item[1], item[2])
+            self._event(t, "flower_sprout", item[1], item[2], "из пыльцы проклюнулся росток")
+        n_flowers = 0
+        for f in self.food:
+            if f.kind == "flower":
+                n_flowers += 1
+                if f.ready(t):
+                    f.amount = min(f.amount0, f.amount + cfg.nectar_refill * dt)
+                    if not f.announced:
+                        f.announced = True
+                        if t - f.ready_at < 1.0 and f.born > 0:
+                            self.counters["flowers_grown"] += 1
+                            self._event(t, "flower_grown", f.x, f.y, "вырос новый цветок")
+        if n_flowers + len(self.pending_flowers) < 3 and self.rng.random() < cfg.wild_seed_rate * dt:
+            x, y = self.free_spot()
+            self.add_flower(t, x, y)
+            self._event(t, "flower_sprout", x, y, "ветер занёс семя — проклюнулся росток")
         for f in list(self.food):
-            if f.kind == "corpse" and not f.announced and f.ready(t) and f.amount > 0.5:
+            if f.kind in ("corpse", "carcass") and not f.announced and f.ready(t) and f.amount > 0.5:
                 f.announced = True
                 self.counters["corpse_food"] += 1
-                self._event(t, "corpse_food", f.x, f.y, f"тело мухи №{f.source} разложилось — стало едой")
-            eaten = f.amount <= 0.5
+                self._event(t, "corpse_food", f.x, f.y, f"тело мухи №{f.source} разложилось — стало едой" if f.kind == "corpse"
+                            else "тело сороконожки разложилось — много еды")
+            eaten = f.amount <= 0.5 and f.kind != "flower"
             if eaten or f.decay(t) >= 1:
                 self.food.remove(f)
                 self._version += 1
@@ -504,6 +622,8 @@ class Arena:
                     self._event(t, "fruit_gone", f.x, f.y, "яблоко съедено" if eaten else "яблоко сгнило и исчезло")
                 elif f.kind == "dropping":
                     self._event(t, "food_gone", f.x, f.y, "помёт съеден" if eaten else "помёт высох")
+                elif f.kind == "flower":
+                    self._event(t, "flower_gone", f.x, f.y, "цветок завял")
                 else:
                     self._event(t, "food_gone", f.x, f.y, "останки съедены" if eaten else "останки истлели")
 
@@ -604,10 +724,30 @@ class Arena:
             s.x, s.y, s.heading, s.detour = float(nx[0]), float(ny[0]), float(h[0]), float(det[0])
         return d
 
-    def _centipede(self, t, dt, flies):
-        c, cfg = self.centipede, self.cfg
+    def _centipede_population(self, t, dt):
+        cfg = self.cfg
+        for c in list(self.centipedes):
+            reason = "old" if c.age >= c.lifespan else "starved" if c.starved_for >= cfg.centipede_starve_death else None
+            if reason:
+                self.centipedes.remove(c)
+                self.counters["centipedes_died"] += 1
+                x, y = self.near_free(c.x, c.y)
+                self.add_food("carcass", t, x, y, cfg.centipede_body_food * c.size, source=c.id)
+                self._event(t, "centipede_died", x, y, "сороконожка умерла от старости" if reason == "old"
+                            else "сороконожка умерла от голода")
+                self.no_centipede_since = t
+        if not self.centipedes:
+            if t - self.no_centipede_since > self.rng.uniform(*cfg.centipede_refill) and self.rng.random() < dt / 10:
+                self.spawn_centipede(t)
+        elif len(self.centipedes) < cfg.max_centipedes and self.rng.random() < cfg.centipede_arrival * dt:
+            self.spawn_centipede(t)
+
+    def _centipede(self, c, t, dt, flies):
+        cfg = self.cfg
         ids, fx, fy = flies["ids"], flies["x"], flies["y"]
+        c.age += dt
         c.energy = max(0.0, c.energy - dt / cfg.centipede_hunger_s)
+        c.starved_for = c.starved_for + dt if c.energy <= 0 else 0.0
         starving = c.energy < cfg.starving
         if starving and not c.starving:
             self._event(t, "centipede_starving", c.x, c.y, "сороконожка ослабла от голода — медлит и отдыхает")
@@ -628,12 +768,13 @@ class Arena:
         if starving and c.target is None and self.rng.random() < dt / 25.0:
             c.rest = float(self.rng.uniform(10, 20))
             return
+        taken = {o.target for o in self.centipedes if o is not c}
         if c.target is None and len(ids) and hungry:
             dx, dy = np.asarray(fx) - c.x, np.asarray(fy) - c.y
             dist = np.hypot(dx, dy)
             rel = np.abs(np.angle(np.exp(1j * (np.arctan2(dy, dx) - c.heading))))
             seen = ((dist < c.see_range) & (rel < c.see_half_angle)) | ((dist < c.feel_range) & np.asarray(flies["moving"]))
-            seen &= ~np.asarray(flies["airborne"])
+            seen &= ~np.asarray(flies["airborne"]) & ~np.isin(ids, list(taken - {None}))
             if seen.any():
                 j = int(np.argmin(np.where(seen, dist, np.inf)))
                 c.target = ids[j]
@@ -682,7 +823,7 @@ class Arena:
                 A["timer"][a] -= dt
                 if len(fid):
                     d = np.hypot(fa["x"] - A["x"][a], fa["y"] - A["y"][a])
-                    d = np.where(fa["edible"], d, np.inf)
+                    d = np.where(fa["edible"] & (fa["kind"] != 4), d, np.inf)     # ground foragers: no nectar
                     k = int(np.argmin(d))
                     if d[k] < cfg.ant_sense:
                         st[a], A["target"][a] = ANT_TO_FOOD, fid[k]
@@ -754,24 +895,30 @@ class Arena:
         return len(lines)
 
     def snapshot(self, t: float) -> dict:
-        s, c, A = self.spider, self.centipede, self.ants
+        s, A = self.spider, self.ants
         return {
             "t": round(t, 3), "light": round(self.light(t), 3), "wind": [round(float(v), 2) for v in self.wind],
             # fruits: [id, x, y, amount, freshness, by_viewer, amount_whole]
             "fruits": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount), round(f.freshness(t), 2), int(f.by_viewer),
                         round(f.amount0)] for f in self.food if f.kind == "fruit"],
-            # food: droppings and bodies [id, kind, x, y, amount, amount_whole, ready 0..1, decay 0..1, source fly]
+            # food: droppings and bodies [id, kind, x, y, amount, amount_whole, ready 0..1, decay 0..1, source]
             "food": [[f.id, f.kind, round(f.x, 1), round(f.y, 1), round(f.amount, 1), round(f.amount0),
-                      round(float(np.clip(1 - (f.ready_at - t) / self.cfg.corpse_delay, 0, 1)), 2), round(f.decay(t), 2),
-                      f.source] for f in self.food if f.kind != "fruit"],
+                      round(float(np.clip(1 - (f.ready_at - t) / (f.ready_at - f.born or 1), 0, 1)), 2), round(f.decay(t), 2),
+                      f.source] for f in self.food if f.kind not in ("fruit", "flower")],
+            # flowers: [id, x, y, nectar, nectar_max, grown 0..1, wither 0..1, hue]
+            "flowers": [[f.id, round(f.x, 1), round(f.y, 1), round(f.amount, 1), round(f.amount0),
+                         round(float(np.clip(1 - (f.ready_at - t) / self.cfg.flower_grow, 0, 1)), 2), round(f.decay(t), 2),
+                         round(f.hue)] for f in self.food if f.kind == "flower"],
             "shadows": [[sh.target, round((t - sh.t_start) / sh.duration, 3), round(sh.direction, 2)] for sh in self.shadows],
             # webs: [id, x, y, radius, strength, build]
             "webs": [[w.id, round(w.x, 1), round(w.y, 1), round(w.radius(), 1), round(w.strength, 2), round(w.build, 2)]
                      for w in self.webs],
             "spider": [round(s.x, 1), round(s.y, 1), round(s.heading, 2), s.target if s.target is not None else -1,
                        s.state, round(s.energy, 2)],
-            "centipede": [round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
-                          c.body[::12], round(c.energy, 2), int(c.rest > 0)],
+            # centipedes: [id, x, y, heading, target, body points, energy, resting, size, age/lifespan]
+            "centipedes": [[c.id, round(c.x, 1), round(c.y, 1), round(c.heading, 2), c.target if c.target is not None else -1,
+                            c.body[::12], round(c.energy, 2), int(c.rest > 0), round(c.size, 2), round(c.age / c.lifespan, 2)]
+                           for c in self.centipedes],
             # ants: [x, y, heading, state, carrying]
             "ants": [[round(float(A["x"][a]), 1), round(float(A["y"][a]), 1), round(float(A["h"][a]), 2), int(A["state"][a]),
                       int(A["carry"][a] > 0)] for a in range(len(A["x"]))],

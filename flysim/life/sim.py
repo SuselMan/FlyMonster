@@ -19,6 +19,8 @@ What is connectome and what is ours (see README):
   it), otherwise the spider arrives. No dice roll.
 - Food is finite: flies (and ants) eat it away. Vision sees flies, food,
   stones, the predators and ants as objects; there is no food-seeking rule.
+- Pollen is body state: a fly that fed on a flower carries its pollen and
+  pollinates the next different flower it feeds on. Nothing steers it there.
 - Flight metrics (long flights, flying across water) are only counted, they
   do not change how flights are triggered.
 - Hunger lowers the threshold of NPF neurons and raises sugar sensitivity.
@@ -128,7 +130,7 @@ class Life:
         self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "air_left", "air_total", "air_speed",
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
-                         "air_x0", "air_y0", "air_water", "air_long")
+                         "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -274,12 +276,13 @@ class Life:
         cfg, ar, B = self.cfg, self.arena, len(self.ids)
         drive = np.zeros((len(self.group_names), B), dtype=np.float32)
         gi = {n: i for i, n in enumerate(self.group_names)}
-        s, c, fa, ants = ar.spider, ar.centipede, ar.food_arrays(self.t), ar.ants
-        # vision: flies, food, stones, spider, centipede, ants as objects in each hemifield
+        s, cs, fa, ants = ar.spider, ar.centipedes, ar.food_arrays(self.t), ar.ants
+        # vision: flies, food and flowers, stones, spider, centipedes, ants as objects in each hemifield
         stones = [o for o in ar.obstacles if o.kind == "stone"]
-        ox = np.concatenate([self.x, fa["x"], [o.x for o in stones], [s.x, c.x], ants["x"]])
-        oy = np.concatenate([self.y, fa["y"], [o.y for o in stones], [s.y, c.y], ants["y"]])
-        osize = np.concatenate([np.full(B, 1.5), fa["r"], [o.rx for o in stones], [4.0, 10.0], np.full(len(ants["x"]), 1.0)])
+        ox = np.concatenate([self.x, fa["x"], [o.x for o in stones], [s.x], [c.x for c in cs], ants["x"]])
+        oy = np.concatenate([self.y, fa["y"], [o.y for o in stones], [s.y], [c.y for c in cs], ants["y"]])
+        osize = np.concatenate([np.full(B, 1.5), fa["r"], [o.rx for o in stones], [4.0], [10.0 * c.size for c in cs],
+                                np.full(len(ants["x"]), 1.0)])
         dx, dy = ox[None] - self.x[:, None], oy[None] - self.y[:, None]
         dist = np.hypot(dx, dy) + 1e-6
         az = np.angle(np.exp(1j * (np.arctan2(dy, dx) - self.heading[:, None])))
@@ -290,7 +293,7 @@ class Life:
         right = (ang * np.clip(-az / 0.5, 0, 1)).sum(1)
         drive[gi["vis_L"]] = 150 * light * np.clip(left / 0.5, 0, 1)
         drive[gi["vis_R"]] = 150 * light * np.clip(right / 0.5, 0, 1)
-        # looming: diving birds, the spider walking to a stuck fly, the centipede closing in
+        # looming: diving birds, the spider walking to a stuck fly, centipedes closing in
         loom = np.zeros((2, B))
         for sh in ar.shadows:
             if sh.target in self.ids:
@@ -300,7 +303,7 @@ class Life:
                 strength = 180 * p ** 2 * (0.3 + 0.7 * light)
                 loom[0, i] = max(loom[0, i], strength * (1.0 if rel > -0.3 else 0.3))
                 loom[1, i] = max(loom[1, i], strength * (1.0 if rel < 0.3 else 0.3))
-        for px, py, size, rng_mm in ((s.x, s.y, 4.0, 25.0), (c.x, c.y, 10.0, 35.0)):
+        for px, py, size, rng_mm in [(s.x, s.y, 4.0, 25.0)] + [(c.x, c.y, 10.0 * c.size, 35.0) for c in cs]:
             d = np.hypot(self.x - px, self.y - py)
             close = d < rng_mm
             if close.any():
@@ -477,6 +480,18 @@ class Life:
                 ar.food[k].amount -= got[k]
             self.energy[eaters] += cfg.sugar_per_s * dt * share[which[eaters]] * cfg.energy_per_sugar
             self.counters["eaten"] += float(got.sum())
+            # pollen sticks to a fly feeding on a flower; the next different flower gets pollinated
+            on_flower = eaters[fa["kind"][which[eaters]] == 4]
+            if len(on_flower):
+                flower_id = np.array([ar.food[k].id for k in which[on_flower]])
+                carrying = (self.pollen[on_flower] > 0) & (self.t - self.pollen_t[on_flower] < ar.cfg.pollen_life)
+                for i, fl in zip(on_flower[carrying & (self.pollen[on_flower] - 1 != flower_id)],
+                                 flower_id[carrying & (self.pollen[on_flower] - 1 != flower_id)]):
+                    seeded = ar.pollinated(self.t, int(fl), int(self.pollen[i]) - 1, self.x[i], self.y[i])
+                    self._event(i, "pollinated", "опылила цветок" + (" — завяжется семя" if seeded else ""))
+                self.pollen[on_flower] = flower_id + 1
+                self.pollen_t[on_flower] = self.t
+        self.pollen[self.t - self.pollen_t > ar.cfg.pollen_life] = 0
         for i in np.flatnonzero(feeding & (self.t - self.last_feed > 3.0)):
             self._event(i, "feed", "ест (MN9 → хоботок)")
         self.last_feed[feeding] = self.t
@@ -522,19 +537,20 @@ class Life:
 
     def _predators(self):
         ar = self.arena
-        s, c = ar.spider, ar.centipede
+        s = ar.spider
         if s.target is not None and s.target in self.ids:
             i = self.ids.index(s.target)
             if self.stuck[i] and np.hypot(self.x[i] - s.x, self.y[i] - s.y) < 2.5:
                 self._kill(i, "spider", "съедена пауком")
-                ar.predator_ate("spider", self.t)
+                ar.predator_ate(s, self.t)
                 s.target = None
-        if c.target is not None and c.target in self.ids:
-            i = self.ids.index(c.target)
-            if self.air_left[i] <= 0 and np.hypot(self.x[i] - c.x, self.y[i] - c.y) < 3.5:
-                self._kill(i, "centipede", "поймана сороконожкой")
-                ar.predator_ate("centipede", self.t)
-                c.target = None
+        for c in ar.centipedes:
+            if c.target is not None and c.target in self.ids:
+                i = self.ids.index(c.target)
+                if self.air_left[i] <= 0 and np.hypot(self.x[i] - c.x, self.y[i] - c.y) < 3.5:
+                    self._kill(i, "centipede", "поймана сороконожкой")
+                    ar.predator_ate(c, self.t)
+                    c.target = None
         self._remove_dead()
 
     # --- bookkeeping --------------------------------------------------------
@@ -600,6 +616,7 @@ class Life:
                        int(self.state[i]), round(float(self.energy[i]), 3), round(float(self.age[i]), 1),
                        [int(self.read[k][i]) for k in READOUT], int(self.generation[i]), int(self.parent[i]),
                        [round(float(v), 2) for v in self.genome[i]], round(float(alt[i]), 2),
-                       [round(float(v), 2) for v in self.senses[i]], round(float(self.escape_force[i]), 2)]
+                       [round(float(v), 2) for v in self.senses[i]], round(float(self.escape_force[i]), 2),
+                       int(self.pollen[i] > 0)]
                       for i, fid in enumerate(self.ids)],
         }
