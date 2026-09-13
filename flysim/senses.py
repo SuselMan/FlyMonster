@@ -72,3 +72,83 @@ class Olfaction:
         r = self.r_max * (a - self.gamma * self.state).clamp(min=0) + self.r_spont
         self.state += (a - self.state) * (dt_ms / self.tau)
         return r[:, self.unit_of].T
+
+
+class Wind:
+    """Wind on the antennae -> Johnston's organ wind/gravity neurons (JO-C, JO-E).
+
+    Each antenna (arista) is deflected by the wind component along its axis; the
+    antennae point ~45 deg to each side of the head: d_L = s * cos(rel - 45 deg),
+    d_R = s * cos(rel + 45 deg), rel = direction the wind comes FROM, relative to
+    heading (+ = left). JO-C neurons fire for one deflection direction, JO-E for the
+    other (Kamikouchi et al. 2009, Yorozu et al. 2009). Which group is "push" and the
+    gains are our modelling choice.
+    """
+
+    def __init__(self, meta: pd.DataFrame, device, r_max: float = 150.0, full_speed: float = 0.8):
+        ct = meta.cell_type.fillna("").to_numpy()
+        side = meta.side.fillna("").to_numpy()
+        sub = meta.cell_sub_class.fillna("").to_numpy()
+        wind = sub == "wind_gravity"
+        groups = [(np.char.startswith(ct.astype(str), "JO-C") & wind, s, +1) for s in ("left", "right")] + \
+                 [(np.char.startswith(ct.astype(str), "JO-E") & wind, s, -1) for s in ("left", "right")]
+        idx, antenna, sign = [], [], []
+        for mask, s, sg in groups:
+            sel = np.flatnonzero(mask & (side == s))
+            idx.extend(sel.tolist())
+            antenna.extend([0 if s == "left" else 1] * len(sel))
+            sign.extend([sg] * len(sel))
+        self.input_idx = torch.tensor(idx, device=device)
+        self.antenna = torch.tensor(antenna, device=device)
+        self.sign = torch.tensor(sign, dtype=torch.float32, device=device)
+        self.r_max, self.full_speed = r_max, full_speed
+
+    def rates(self, speed: torch.Tensor, rel: torch.Tensor) -> torch.Tensor:
+        """speed, rel: (batch,) -> (n_neurons, batch) Hz."""
+        s = (speed / self.full_speed).clamp(0, 1)
+        d = torch.stack([s * torch.cos(rel - np.pi / 4), s * torch.cos(rel + np.pi / 4)])   # (2, batch)
+        return self.r_max * (d[self.antenna] * self.sign[:, None]).clamp(min=0)
+
+
+class Compass:
+    """Head direction as a bump of activity on the E-PG ring of the central complex.
+
+    FlyWire does not annotate E-PG wedges; the ring order is recovered from the
+    connectome itself (spectral embedding of each E-PG's input/output partner
+    profile gives a degenerate pair of eigenvectors = a circle). In the fly the
+    bump is set by ring neurons from the visual scene; here we inject it directly
+    (modelling choice: the compass works and is anchored to the world).
+    """
+
+    def __init__(self, con, meta: pd.DataFrame, device, r_max: float = 80.0, kappa: float = 2.5):
+        ct = meta.cell_type.fillna("").to_numpy()
+        idx = np.flatnonzero(ct == "EPG")
+        self.phase = torch.tensor(ring_phase(con, idx), dtype=torch.float32, device=device)
+        self.input_idx = torch.tensor(idx, device=device)
+        self.r_max, self.kappa = r_max, kappa
+
+    def rates(self, heading: torch.Tensor) -> torch.Tensor:
+        """heading: (batch,) rad -> (n_epg, batch) Hz."""
+        return self.r_max * torch.exp(self.kappa * (torch.cos(self.phase[:, None] - heading[None]) - 1))
+
+
+def ring_phase(con, idx: np.ndarray) -> np.ndarray:
+    """Angle of each neuron on the ring recovered from its partner profile (normalized spectral embedding)."""
+    w = con.weights
+    crow, col, val = w.crow_indices().cpu().numpy(), w.col_indices().cpu().numpy(), w.values().cpu().numpy()
+    pre = np.repeat(np.arange(len(crow) - 1), np.diff(crow))
+    pos = np.full(len(crow) - 1, -1)
+    pos[idx] = np.arange(len(idx))
+    om, im = pos[pre] >= 0, pos[col] >= 0
+    parts = np.unique(np.concatenate([col[om], pre[im]]))
+    pp = np.full(len(crow) - 1, -1)
+    pp[parts] = np.arange(len(parts))
+    P = np.zeros((len(idx), 2 * len(parts)))
+    np.add.at(P, (pos[pre[om]], pp[col[om]]), np.abs(val[om]))
+    np.add.at(P, (pos[col[im]], len(parts) + pp[pre[im]]), np.abs(val[im]))
+    P = np.sqrt(P)
+    P /= np.linalg.norm(P, axis=1, keepdims=True) + 1e-9
+    S = P @ P.T
+    d = 1 / np.sqrt(S.sum(1))
+    _, vec = np.linalg.eigh(d[:, None] * S * d[None])
+    return np.arctan2(vec[:, -3], vec[:, -2])
