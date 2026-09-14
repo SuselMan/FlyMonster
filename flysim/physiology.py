@@ -74,7 +74,13 @@ def apply(con: connectome.Connectome, phys: Physiology, meta: pd.DataFrame | Non
     # AL override acts on the actual excitatory weights of local neurons.
     ln = torch.repeat_interleave(torch.from_numpy((meta.cell_class.fillna("") == "ALLN").to_numpy()), counts)
     val[ln & (val > 0)] *= phys.al_exc_ln
-    return connectome.Connectome(con.ids, torch.sparse_csr_tensor(crow, col, val, w.shape), con.index_of)
+    # drop synapses scaled to zero: identical dynamics, but spikes of e.g. octopamine neurons no longer
+    # generate thousands of zero-weight events per spike
+    keep = val != 0
+    rows = torch.repeat_interleave(torch.arange(len(counts)), counts)
+    kept = torch.bincount(rows[keep], minlength=len(counts))
+    crow = torch.cat([torch.zeros(1, dtype=crow.dtype), torch.cumsum(kept, 0).to(crow.dtype)])
+    return connectome.Connectome(con.ids, torch.sparse_csr_tensor(crow, col[keep], val[keep], w.shape), con.index_of)
 
 
 def describe(phys: Physiology) -> dict:

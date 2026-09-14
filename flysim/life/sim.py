@@ -134,10 +134,21 @@ class Life:
         params = cfg.physiology.lif()
         self.steps_per_world = round(WORLD_DT * 1000 / params.dt)
         self._wire()
-        self.olf = Olfaction(self.meta, cfg.max_flies, self.dev)
-        self.wind_sense = Wind(self.meta, self.dev)
-        self.compass = Compass(self.con, self.meta, self.dev)
-        self.input_idx = torch.cat([self.sense_idx, self.olf.input_idx, self.wind_sense.input_idx, self.compass.input_idx])
+        # sensory transducers run on the CPU (inputs come from numpy); rates reach the GPU in one pinned,
+        # non-blocking copy per step, so the CPU never waits for the brain block that is still running
+        cpu = torch.device("cpu")
+        self.olf = Olfaction(self.meta, cfg.max_flies, cpu)
+        self.wind_sense = Wind(self.meta, cpu)
+        self.compass = Compass(self.con, self.meta, cpu)
+        self.sense_col_cpu = self.sense_col.cpu()
+        self.input_idx = torch.cat([self.sense_idx.cpu(), self.olf.input_idx, self.wind_sense.input_idx,
+                                    self.compass.input_idx]).to(self.dev)
+        self.read_mix_cpu = self.read_mix.cpu()
+        pin = self.dev.type == "cuda"
+        # two alternating pinned buffers: a non-blocking copy may still be queued when the next step writes
+        self._rates_host = [torch.zeros(len(self.input_idx), cfg.max_flies, pin_memory=pin) for _ in range(2)]
+        self._bias_host = [torch.zeros(cfg.max_flies, pin_memory=pin) for _ in range(2)]
+        self._host_turn = 0
         if self.dev.type == "cuda" and params.std_u == 0:
             self.brain = FastBrain(model, cfg.max_flies, params, self.input_idx, self.read_idx, self.npf_idx,
                                    steps=self.steps_per_world, max_spikes=64 * cfg.max_flies, max_events=11_000 * cfg.max_flies)
@@ -275,16 +286,19 @@ class Life:
             self.t += WORLD_DT
             return
         light = self.arena.light(self.t)
-        slots = torch.tensor(self.slot.astype(np.int64), device=self.dev)
-        g = torch.tensor(self.genome, dtype=torch.float32, device=self.dev)
-        rates = torch.zeros(len(self.input_idx), self.cfg.max_flies, device=self.dev)
+        slots = torch.tensor(self.slot.astype(np.int64))
+        g = torch.tensor(self.genome, dtype=torch.float32)
+        self._host_turn ^= 1
+        rates = self._rates_host[self._host_turn]
+        rates.zero_()
         rates[:len(self.sense_idx), slots] = self._sensory_rates(light)
         n_s, n_o = len(self.sense_idx), len(self.olf.input_idx)
         rates[n_s:n_s + n_o] = self._olfaction()
         rates[n_s:n_s + n_o, slots] *= g[:, GENES.index("smell")]
         rates[n_s + n_o:, slots] = self._wind_and_compass()
-        bias = torch.zeros(self.cfg.max_flies, device=self.dev)
-        bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32, device=self.dev)             * g[:, GENES.index("hunger")]
+        bias = self._bias_host[self._host_turn]
+        bias.zero_()
+        bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32) * g[:, GENES.index("hunger")]
         hz = self._brain_hz(rates, bias, slots)
         a = WORLD_DT / READ_TAU
         for r, k in enumerate(READOUT):
@@ -308,26 +322,30 @@ class Life:
             # CPU was preparing this step (one extra 10 ms of sensorimotor delay).
             if self._pending is None:
                 self._pending_host = torch.zeros(self.brain.counts.shape, pin_memory=True)
+                self._overflow_host = torch.zeros((), pin_memory=True)
             else:
                 self._pending.synchronize()
             prev = self._pending_host.clone()
-            self.brain.rates.copy_(rates)
-            self.brain.bias.copy_(bias)
+            overflowed = float(self._overflow_host) > 0
+            self.brain.rates.copy_(rates, non_blocking=True)
+            self.brain.bias.copy_(bias, non_blocking=True)
             self.brain.run()
             self._pending_host.copy_(self.brain.counts, non_blocking=True)
+            self._overflow_host.copy_(self.brain.overflow, non_blocking=True)
             self._pending = torch.cuda.Event()
             self._pending.record()
-            counts = prev[:, slots.cpu()].to(self.dev)
-        else:
-            counts = torch.zeros(len(self.read_idx), self.cfg.max_flies, device=self.dev)
-            for _ in range(self.steps_per_world):
-                if len(self.npf_idx):
-                    self.brain.g[self.npf_idx] += bias * (self.brain.p.dt / self.brain.p.tau)
-                counts += self.brain.step(self.input_idx, rates)[self.read_idx]
-            counts = counts[:, slots]
-        hz = ((self.read_mix @ counts) / WORLD_DT).cpu().numpy()
-        self._check_overflow()
-        return hz
+            hz = ((self.read_mix_cpu @ prev[:, slots]) / WORLD_DT).numpy()
+            if overflowed:
+                self._pending.synchronize()
+                self._check_overflow()
+            return hz
+        counts = torch.zeros(len(self.read_idx), self.cfg.max_flies, device=self.dev)
+        rates_d, bias_d = rates.to(self.dev), bias.to(self.dev)
+        for _ in range(self.steps_per_world):
+            if len(self.npf_idx):
+                self.brain.g[self.npf_idx] += bias_d * (self.brain.p.dt / self.brain.p.tau)
+            counts += self.brain.step(self.input_idx, rates_d)[self.read_idx]
+        return ((self.read_mix @ counts[:, slots.to(self.dev)]) / WORLD_DT).cpu().numpy()
 
     def _sensory_rates(self, light: float) -> torch.Tensor:
         cfg, ar, B = self.cfg, self.arena, len(self.ids)
@@ -393,7 +411,7 @@ class Life:
         self.senses[:, 5] = loom.max(0) / 180
         self.senses[:, 6] = self.touch_left != 0
         self.senses[:, 7] = sugar / 150
-        return torch.from_numpy(drive).to(self.dev)[self.sense_col]
+        return torch.from_numpy(drive)[self.sense_col_cpu]
 
     def _at_water(self) -> np.ndarray:
         """Walking fly whose head reaches open water (a pond edge)."""
@@ -415,9 +433,8 @@ class Life:
         wx, wy = (float(v) for v in self.arena.wind)
         rel = np.angle(np.exp(1j * (np.arctan2(-wy, -wx) - self.heading)))          # where the wind comes from, + = left
         speed = np.where(self.air_left > 0, 0.0, np.hypot(wx, wy))
-        wind = self.wind_sense.rates(torch.tensor(speed, dtype=torch.float32, device=self.dev),
-                                     torch.tensor(rel, dtype=torch.float32, device=self.dev))
-        heading = self.compass.rates(torch.tensor(self.heading, dtype=torch.float32, device=self.dev))
+        wind = self.wind_sense.rates(torch.tensor(speed, dtype=torch.float32), torch.tensor(rel, dtype=torch.float32))
+        heading = self.compass.rates(torch.tensor(self.heading, dtype=torch.float32))
         return torch.cat([wind, heading])
 
     def _olfaction(self) -> torch.Tensor:
@@ -441,7 +458,7 @@ class Life:
         self.senses[:, 4] = conc[:, n.index("spider"), :].max(1)
         full = np.zeros((self.cfg.max_flies, *conc.shape[1:]), dtype=np.float32)
         full[self.slot.astype(np.int64)] = conc
-        return self.olf.rates(torch.from_numpy(full).to(self.dev), WORLD_DT * 1000)
+        return self.olf.rates(torch.from_numpy(full), WORLD_DT * 1000)
 
     def _body(self, light: float):
         cfg, dt, ar = self.cfg, WORLD_DT, self.arena
@@ -735,7 +752,7 @@ class Life:
         # the graph path drops spikes if its fixed buffers overflow: grow them and re-record
         if isinstance(self.brain, FastBrain) and float(self.brain.overflow) > 0:
             b = self.brain
-            b.max_spikes, b.max_events = b.max_spikes * 2, b.max_events * 2
+            b.max_spikes, b.max_events = int(b.max_spikes * 1.25), int(b.max_events * 1.25)   # each block costs ~ buffer size
             b._alloc_events()
             b.overflow.zero_()
             state = [t.clone() for t in (b.v, b.g, b.refrac, b.spike_buf)]
