@@ -59,6 +59,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import mapgen
+
 KINDS = ("fruit", "dropping", "corpse", "carcass", "flower")   # carcass: a dead centipede
 
 
@@ -206,6 +208,10 @@ class Centipede:
 class ArenaConfig:
     width: float = 600.0
     height: float = 400.0
+    # map: "generated" (seeded, with one special biome, see mapgen.py) or "classic" (the old fixed layout)
+    map: str = "generated"
+    map_seed: int | None = None             # None: the world seed
+    biome: str | None = None                # force "orchard" | "marsh" | "rocky" | "meadow"
     fruit_sugar: float = 250.0       # a viewer apple of size 1
     odor_ref: float = 120.0          # amount at which a source smells at full strength
     odor_sigma: float = 30.0
@@ -318,6 +324,10 @@ class Arena:
     nest: tuple = (0.0, 0.0)
     pending_flies: list = field(default_factory=list)  # viewer-released flies (x, y) for Life to place
     trees: list = field(default_factory=list)          # apple trees (x, y); walkable, drop apples
+    biomes: list = field(default_factory=list)         # special biome areas {kind, x, y, r} (mapgen)
+    map_name: str = ""
+    map_seed: int = 0
+    den: tuple | None = None                           # centipede den (orchard maps): newcomers may come out of it
     nest_food: float = 0.0
     nest_known: int = -1        # food id a returning ant reported
     ants: dict = None
@@ -331,28 +341,16 @@ class Arena:
     def create(cfg: ArenaConfig, seed: int) -> "Arena":
         a = Arena(cfg, np.random.default_rng(seed))
         W, H = cfg.width, cfg.height
-        # proportions follow the viewer sprites (lake ~1.15:1, stones roughly round)
-        a.obstacles = [
-            Obstacle("water", W * 0.52, H * 0.55, 72, 60, 0.0),
-            Obstacle("water", W * 0.17, H * 0.24, 40, 34, 0.0),
-            Obstacle("stone", W * 0.35, H * 0.74, 14, 14, 0.0),
-            Obstacle("stone", W * 0.80, H * 0.27, 19, 19, 0.0),
-            Obstacle("stone", W * 0.84, H * 0.80, 12, 12, 0.0),
-            Obstacle("stone", W * 0.10, H * 0.72, 16, 16, 0.0),
-            Obstacle("stone", W * 0.64, H * 0.14, 11, 11, 0.0),
-        ]
-        a.shelters = [
-            Obstacle("litter", W * 0.30, H * 0.80, 30, 18, 0.3),
-            Obstacle("litter", W * 0.06, H * 0.55, 22, 34, 0.0),
-            Obstacle("litter", W * 0.72, H * 0.88, 34, 16, -0.2),
-            Obstacle("litter", W * 0.88, H * 0.40, 20, 28, 0.4),
-            Obstacle("litter", W * 0.45, H * 0.12, 30, 14, 0.1),
-        ]
-        a.trees = [(W * 0.70, H * 0.30), (W * 0.22, H * 0.56)]
+        a.map_seed = int(seed if cfg.map_seed is None else cfg.map_seed)
+        if cfg.map == "classic":
+            lay = mapgen.classic(cfg)
+        else:   # own rng stream: the map does not shift the world's random sequence
+            lay = mapgen.generate(cfg, np.random.default_rng([a.map_seed, 0x6D6170]))
+        a.obstacles, a.shelters, a.trees, a.nest = lay.obstacles, lay.shelters, lay.trees, lay.nest
+        a.biomes, a.map_name, a.den = lay.biomes, lay.name, lay.den
         a.heat = np.zeros((int(np.ceil(H / cfg.heat_cell)), int(np.ceil(W / cfg.heat_cell))))
-        first = a.add_spider(W * 0.30, H * 0.42, last_build=0.0)    # first new web after the heatmap has some data
-        a.spawn_centipede(0.0, W * 0.85, H * 0.55, announce=False)
-        a.nest = (W * 0.93, H * 0.08)
+        first = a.add_spider(*lay.spider_start, last_build=0.0)    # first new web after the heatmap has some data
+        a.spawn_centipede(0.0, *lay.centipede_start, announce=False)
         n = cfg.n_ants
         a.ants = {"x": np.full(n, a.nest[0]), "y": np.full(n, a.nest[1]), "h": a.rng.uniform(-np.pi, np.pi, n),
                   "state": np.full(n, ANT_NEST), "target": np.full(n, -1), "carry": np.zeros(n),
@@ -364,8 +362,8 @@ class Arena:
         for _ in range(cfg.initial_droppings):
             x, y = a.free_spot()
             a.add_food("dropping", 0.0, x, y, cfg.dropping_food, age=float(a.rng.uniform(0, 150)))
-        for _ in range(cfg.initial_flowers):
-            x, y = a.free_spot()
+        for k in range(cfg.initial_flowers if lay.flowers is None else len(lay.flowers)):
+            x, y = a.free_spot() if lay.flowers is None else lay.flowers[k]     # generated maps: fertile ground
             a.add_flower(0.0, x, y, age=float(a.rng.uniform(cfg.flower_grow, 600)))
         # the spider starts with one finished web at its first spot
         w = Web(a.next_web_id, first.x, first.y, float(np.mean(cfg.web_radius)), 0.0, 1.0, 0.0, owner=first.id)
@@ -433,12 +431,13 @@ class Arena:
         heading = want.copy()
         nx, ny = x.copy(), y.copy()
         todo = np.ones(len(x), dtype=bool)
+        inside = self.blocked(x, y, pad)       # e.g. a spider that ended a web spiral on a stone: let it walk out
         for rot in (0.0, 0.8, 1.6, -0.8, -1.6, 2.4, -2.4):
             if not todo.any():
                 break
             h = want + detour * rot
             tx, ty = x + speed * np.cos(h) * dt, y + speed * np.sin(h) * dt
-            ok = todo & (tx > 3) & (tx < W - 3) & (ty > 3) & (ty < H - 3) & ~self.blocked(tx, ty, pad)
+            ok = todo & (tx > 3) & (tx < W - 3) & (ty > 3) & (ty < H - 3) & (inside | ~self.blocked(tx, ty, pad))
             nx[ok], ny[ok], heading[ok] = tx[ok], ty[ok], h[ok]
             if rot < 0:
                 detour[ok] = -detour[ok]
@@ -569,6 +568,10 @@ class Arena:
     def spawn_centipede(self, t, x=None, y=None, announce=True):
         cfg = self.cfg
         W, H = cfg.width, cfg.height
+        text = "с края карты пришла новая сороконожка"
+        if x is None and self.den is not None and self.rng.random() < 0.5:     # orchard maps: out of the den
+            x, y = self.near_free(*self.den)
+            text = "из логова вылезла новая сороконожка"
         if x is None:
             for _ in range(50):          # walk in from a random map edge
                 side = int(self.rng.integers(4))
@@ -582,7 +585,7 @@ class Arena:
         self.centipedes.append(c)
         if announce:
             self.counters["centipedes_arrived"] += 1
-            self._event(t, "centipede_arrived", x, y, "с края карты пришла новая сороконожка")
+            self._event(t, "centipede_arrived", x, y, text)
         return c
 
     # --- seasons ------------------------------------------------------------------
@@ -1193,4 +1196,6 @@ class Arena:
                 "nest": [round(self.nest[0], 1), round(self.nest[1], 1)], "trees": [[round(x, 1), round(y, 1)] for x, y in self.trees],
                 "tree_crown": self.cfg.tree_crown, "max_webs": self.cfg.max_webs,
                 "shelters": [[o.kind, o.x, o.y, o.rx, o.ry, o.angle] for o in self.shelters],
-                "year_length": self.cfg.year_length, "year_start": self.cfg.year_start, "seasons": list(SEASONS)}
+                "year_length": self.cfg.year_length, "year_start": self.cfg.year_start, "seasons": list(SEASONS),
+                "map": self.cfg.map, "map_seed": self.map_seed, "map_name": self.map_name, "biomes": self.biomes,
+                "den": [round(self.den[0], 1), round(self.den[1], 1)] if self.den else None}
