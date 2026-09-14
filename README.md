@@ -62,7 +62,7 @@ connectome and the published LIF model. Around it:
   those two (w 2.09, 2.55) flies reached the apple in 54% of validation episodes vs 8% pure wander and 0%
   with the old DNa01+DNa02 mapping (`LifeConfig.steer`, `STEER_EVOLVED`).
 - **Body**: walking is an innate generator (leg circuits are in the ventral
-  nerve cord, not in FAFB). The brain steers with DNa01/DNa02, walks backward
+  nerve cord, not in FAFB). The brain steers through the evolved mapping above, walks backward
   with MDN, takes off with the giant fiber DNp01, feeds with MN9. The body
   adapts to a sustained left-right DNa difference (the single DNa neurons of
   this connectome carry a static left bias).
