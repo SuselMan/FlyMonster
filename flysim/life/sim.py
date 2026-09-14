@@ -158,7 +158,7 @@ class Life:
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
                          "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
-                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base")
+                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base", "last_groom", "last_drink")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES)), "steer_base": (0, len(STEER_TYPES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -221,7 +221,8 @@ class Life:
         new["slot"] = np.array(slots, dtype=float)
         new.update({"x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
                     "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "jumped_at": np.full(n, -1e9),
-                    "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
+                    "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9),
+                    "last_groom": np.full(n, -1e9), "last_drink": np.full(n, -1e9), "generation": generations,
                     "parent": parents, "born_t": np.full(n, self.t), "hydration": np.ones(n), "genome": genomes, "senses": np.zeros((n, len(SENSES))),
                     "steer_base": np.zeros((n, len(STEER_TYPES)))})
         for c in self._columns:
@@ -467,10 +468,12 @@ class Life:
         self.grooming = np.where(busy, 0, np.where(self.grooming > 0, self.dust > 0.08,
                                                    r["aBN1"] > cfg.groom_threshold)).astype(float)
         grooming = self.grooming > 0
-        for i in np.flatnonzero(grooming & (self.state != 6)):
+        for i in np.flatnonzero(grooming & (self.t - self.last_groom > 5.0)):
             self._event(i, "groom", "чистит антенны (JON-CE → aBN1)")
-        for i in np.flatnonzero(drinking & (self.state != 5)):
+        for i in np.flatnonzero(drinking & (self.t - self.last_drink > 5.0)):
             self._event(i, "drink", "пьёт воду (водяные рецепторы → MN9)")
+        self.last_groom[grooming] = self.t
+        self.last_drink[drinking] = self.t
         self.cooldown = np.maximum(self.cooldown - dt, 0)
         ready = (self.cooldown <= 0) & ~airborne
         long_drive = (r["DNp02"] + r["DNp04"] + r["DNp11"]) / 3
