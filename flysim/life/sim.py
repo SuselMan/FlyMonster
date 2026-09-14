@@ -54,6 +54,16 @@ READOUT = {               # name -> (cell_type, side or None)
     "MDN": ("MDN", None), "GF": ("DNp01", None), "MN9": (None, None), "aBN1": (None, None),
     "DNp02": ("DNp02", None), "DNp04": ("DNp04", None), "DNp11": ("DNp11", None), "DNp09": ("DNp09", None),
 }
+# Steering: the ventral nerve cord that turns DN activity into leg movements is not in FAFB, so
+# the mapping is evolved (scripts/evolve_steer.py): turn = sum_k w_k * (L - R rate of DN type k,
+# high-passed with turn_adapt) / 50 + bias. The brain itself is untouched.
+STEER_TYPES = ("DNa01", "DNa02", "DNb05", "DNp18", "DNg99", "DNb06", "DNbe001", "DNp33", "DNg13", "DNp35",
+               "DNg56", "DNp06", "DNp31", "DNa04", "DNa10", "DNp19", "DNg96", "DNg31", "DNp73", "DNa11")
+for _t in STEER_TYPES:
+    READOUT.setdefault(f"{_t} L", (_t, "left"))
+    READOUT.setdefault(f"{_t} R", (_t, "right"))
+STEER_EVOLVED = {"DNa02": 2.09, "DNg99": 2.55}   # elite mean of both islands; validation (72 episodes each):
+# reached the apple 54% vs 8% pure wander and 0% legacy DNa01+DNa02 (results/eval_seed12.json)
 LONG_FLIGHT_MM = 80.0     # a long-mode flight that covered at least this much ground
 GENES = ("vision", "smell", "taste", "looming", "hunger", "walk")
 SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar", "bitter", "water", "dust")
@@ -67,6 +77,7 @@ class LifeConfig:
     walk_speed: float = 14.0      # mm/s, innate walking generator
     turn_gain: float = 0.025      # rad/s per Hz of left-right DNa01+DNa02 difference
     turn_adapt: float = 5.0       # s, adaptation of the body to a sustained left-right difference
+    steer: dict | None = field(default_factory=lambda: dict(STEER_EVOLVED))   # None -> legacy DNa01+DNa02 * turn_gain
     wander: float = 1.2           # rad/s^0.5, turning noise of the walking generator
     gf_threshold: float = 60.0    # Hz, giant fiber -> short escape hop
     long_threshold: float = 45.0  # Hz, mean of DNp02/04/11 -> long-mode takeoff
@@ -147,9 +158,9 @@ class Life:
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
                          "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
-                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming")
+                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base")
         for c in self._columns:
-            shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES))}.get(c, (0,))
+            shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES)), "steer_base": (0, len(STEER_TYPES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
         self.read = {k: np.zeros(0) for k in READOUT}
         xs, ys = zip(*[self.arena.free_spot() for _ in range(B)])
@@ -211,7 +222,8 @@ class Life:
         new.update({"x": xs, "y": ys, "heading": self.rng.uniform(-np.pi, np.pi, n), "energy": np.full(n, 0.7),
                     "lifespan": self.rng.uniform(*self.cfg.lifespan, n), "jumped_at": np.full(n, -1e9),
                     "last_feed": np.full(n, -1e9), "last_egg": np.full(n, -1e9), "generation": generations,
-                    "parent": parents, "born_t": np.full(n, self.t), "hydration": np.ones(n), "genome": genomes, "senses": np.zeros((n, len(SENSES)))})
+                    "parent": parents, "born_t": np.full(n, self.t), "hydration": np.ones(n), "genome": genomes, "senses": np.zeros((n, len(SENSES))),
+                    "steer_base": np.zeros((n, len(STEER_TYPES)))})
         for c in self._columns:
             setattr(self, c, np.concatenate([getattr(self, c), new[c]]))
         self.read = {k: np.concatenate([v, np.zeros(n)]) for k, v in self.read.items()}
@@ -434,9 +446,15 @@ class Life:
         cfg, dt, ar = self.cfg, WORLD_DT, self.arena
         r = self.read
         B = len(self.ids)
-        diff = (r["DNa01 L"] + r["DNa02 L"]) - (r["DNa01 R"] + r["DNa02 R"])
-        self.turn_base += (diff - self.turn_base) * (dt / cfg.turn_adapt)
-        turn = cfg.turn_gain * (diff - self.turn_base)
+        if cfg.steer is None:
+            diff = (r["DNa01 L"] + r["DNa02 L"]) - (r["DNa01 R"] + r["DNa02 R"])
+            self.turn_base += (diff - self.turn_base) * (dt / cfg.turn_adapt)
+            turn = cfg.turn_gain * (diff - self.turn_base)
+        else:
+            diffs = np.stack([r[f"{t} L"] - r[f"{t} R"] for t in STEER_TYPES], 1)          # (flies, types)
+            self.steer_base += (diffs - self.steer_base) * (dt / cfg.turn_adapt)
+            w = np.array([cfg.steer.get(t, 0.0) for t in STEER_TYPES])
+            turn = np.clip((diffs - self.steer_base) @ w / 50.0 + cfg.steer.get("bias", 0.0), -4.0, 4.0)
         airborne = self.air_left > 0
         fa = ar.food_arrays(self.t)
         on_fruit = self._touching_food(fa).any(1)

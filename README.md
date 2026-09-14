@@ -56,6 +56,11 @@ connectome and the published LIF model. Around it:
   Vision enters at visual projection neurons.
 - **Sensory transducers** (odor saturation/adaptation, vision salience,
   looming from bird shadows) are modelling choices.
+- **Steering is evolved**: the ventral nerve cord is not in the data, so `scripts/evolve_steer.py` evolved how
+  left-right differences of candidate DNs turn the body (brain untouched; task: find an apple by odor,
+  wind and sight). Two independent runs converged on DNa02 and DNg99 (a wind-side coding pair); with only
+  those two (w 2.09, 2.55) flies reached the apple in 54% of validation episodes vs 8% pure wander and 0%
+  with the old DNa01+DNa02 mapping (`LifeConfig.steer`, `STEER_EVOLVED`).
 - **Body**: walking is an innate generator (leg circuits are in the ventral
   nerve cord, not in FAFB). The brain steers with DNa01/DNa02, walks backward
   with MDN, takes off with the giant fiber DNp01, feeds with MN9. The body
