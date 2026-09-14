@@ -99,7 +99,7 @@ class LifeConfig:
     groom_clean: float = 0.25     # dust removed per s of grooming
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
-    web_escape: float = 1.6       # escape force needed to tear free (fresh web: ~3 takeoff attempts)
+    web_escape: float = 1.3       # escape force needed to tear free (fresh web: 2-3 takeoff attempts)
     metabolism: float = 0.0005
     move_cost: float = 0.00004
     jump_cost: float = 0.01
@@ -157,7 +157,7 @@ class Life:
         self._host_turn = 0
         if self.dev.type == "cuda" and params.std_u == 0:
             self.brain = FastBrain(model, cfg.max_flies, params, self.input_idx, self.read_idx, self.npf_idx,
-                                   steps=self.steps_per_world, max_spikes=64 * cfg.max_flies, max_events=11_000 * cfg.max_flies)
+                                   steps=self.steps_per_world, max_spikes=96 * cfg.max_flies, max_events=20_000 * cfg.max_flies)
         else:
             self.brain = FlyBrain(model, batch=cfg.max_flies, params=params, device=self.dev)
         self.free_slots = list(range(cfg.max_flies))
@@ -328,22 +328,23 @@ class Life:
             # CPU was preparing this step (one extra 10 ms of sensorimotor delay).
             if self._pending is None:
                 self._pending_host = torch.zeros(self.brain.counts.shape, pin_memory=True)
-                self._overflow_host = torch.zeros((), pin_memory=True)
+                self._overflow_host = torch.zeros(2, pin_memory=True)
             else:
                 self._pending.synchronize()
             prev = self._pending_host.clone()
-            overflowed = float(self._overflow_host) > 0
+            overflowed = bool((self._overflow_host > 0).any())
+            kinds = self._overflow_host.clone()
             self.brain.rates.copy_(rates, non_blocking=True)
             self.brain.bias.copy_(bias, non_blocking=True)
             self.brain.run()
             self._pending_host.copy_(self.brain.counts, non_blocking=True)
-            self._overflow_host.copy_(self.brain.overflow, non_blocking=True)
+            self._overflow_host.copy_(self.brain.overflow_kind, non_blocking=True)
             self._pending = torch.cuda.Event()
             self._pending.record()
             hz = ((self.read_mix_cpu @ prev[:, slots]) / WORLD_DT).numpy()
             if overflowed:
                 self._pending.synchronize()
-                self._check_overflow()
+                self._check_overflow(bool(kinds[0] > 0), bool(kinds[1] > 0))
             return hz
         counts = torch.zeros(len(self.read_idx), self.cfg.max_flies, device=self.dev)
         rates_d, bias_d = rates.to(self.dev), bias.to(self.dev)
@@ -766,13 +767,18 @@ class Life:
             self.brain.reset(mask)
         self.olf.state[slots] = 0
 
-    def _check_overflow(self):
-        # the graph path drops spikes if its fixed buffers overflow: grow them and re-record
-        if isinstance(self.brain, FastBrain) and float(self.brain.overflow) > 0:
+    def _check_overflow(self, events: bool = True, spikes: bool = True):
+        # the graph path drops spikes if its fixed buffers overflow: grow the one that overflowed and re-record
+        # (each block costs about the size of the event buffer, so it grows gently and only when it was full)
+        if isinstance(self.brain, FastBrain) and (events or spikes):
             b = self.brain
-            b.max_spikes, b.max_events = int(b.max_spikes * 1.25), int(b.max_events * 1.25)   # each block costs ~ buffer size
+            if events:
+                b.max_events = int(b.max_events * 1.25)
+            if spikes:
+                b.max_spikes = int(b.max_spikes * 1.25)
             b._alloc_events()
             b.overflow.zero_()
+            b.overflow_kind.zero_()
             state = [t.clone() for t in (b.v, b.g, b.refrac, b.spike_buf)]
             b.capture()
             for dst, src in zip((b.v, b.g, b.refrac, b.spike_buf), state):

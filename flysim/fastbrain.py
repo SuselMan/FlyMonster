@@ -78,6 +78,7 @@ class FastBrain:
         self.bias = torch.zeros(batch, device=self.dev)          # added to g of bias neurons each step (mV)
         self.counts = torch.zeros(len(self.read_idx), batch, device=self.dev)
         self.overflow = torch.zeros((), device=self.dev)
+        self.overflow_kind = torch.zeros(2, device=self.dev)       # [event buffer, spike list] overflowed
         self.graph = None
         self.use_kernel = _LIF is not None and use_kernel
         if self.use_kernel:
@@ -112,8 +113,9 @@ class FastBrain:
                                                     cupy.int32(K), cupy.int32(B), cupy.int64(E)))
             self.g.view(-1).index_add_(0, self.ev_tgt, self.ev_w)
             # overflow: more events than the buffer, or the spike list is full (its last entry is real)
-            self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(
-                (off[-1] > E).float(), (flat[-1] < n * B).float())))
+            ev_over, sp_over = (off[-1] > E).float(), (flat[-1] < n * B).float()
+            self.overflow_kind.copy_(torch.maximum(self.overflow_kind, torch.stack([ev_over, sp_over])))
+            self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(ev_over, sp_over)))
             return self._integrate(slot)
         arriving = self.spike_buf[slot].reshape(-1)
         flat = torch.nonzero_static(arriving, size=self.max_spikes, fill_value=n * B).squeeze(1)
@@ -126,8 +128,9 @@ class FastBrain:
         syn = (start[j] + self.events - (off[j] - cnt[j])).clamp(max=self.nnz - 1)
         valid = self.events < total
         self.g.view(-1).index_add_(0, self.post[syn] * B + col[j], self.w[syn] * valid)
-        self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(
-            (total > self.max_events).float(), (arriving.sum() > self.max_spikes).float())))
+        ev_over, sp_over = (total > self.max_events).float(), (arriving.sum() > self.max_spikes).float()
+        self.overflow_kind.copy_(torch.maximum(self.overflow_kind, torch.stack([ev_over, sp_over])))
+        self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(ev_over, sp_over)))
         return self._integrate(slot)
 
     def _integrate(self, slot: int):
@@ -191,6 +194,7 @@ class FastBrain:
         self.refrac.zero_()
         self.spike_buf.zero_()
         self.overflow.zero_()
+        self.overflow_kind.zero_()
 
     def reset_columns(self, cols):
         cols = torch.as_tensor(cols, device=self.dev, dtype=torch.long)

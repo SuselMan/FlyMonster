@@ -170,7 +170,7 @@ class Spider:
     heading: float = 0.0
     target: int | None = None
     speed: float = 6.0
-    rush_speed: float = 30.0   # mm/s dash along its web to a stuck fly
+    rush_speed: float = 18.0   # mm/s dash along its web to a stuck fly
     energy: float = 0.5
     starved_for: float = 0.0
     state: str = "wait"        # wait | travel | build | rest
