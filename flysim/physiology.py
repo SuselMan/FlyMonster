@@ -7,7 +7,10 @@ transmitter. Two known problems in that assumption matter for us:
   receptors, but the model counts them as fast excitation;
 - in the antennal lobe, excitatory local neurons couple mainly electrically
   and weakly, while their many chemical synapses make the model's AL ignite
-  into one global avalanche for any odor.
+  into one global avalanche for any odor;
+- FlyWire predicts dopamine as the transmitter of 5172 of 5177 Kenyon cells,
+  but Kenyon cells are cholinergic; switching modulators off must not cut
+  the whole mushroom-body output (scripts/mb_revive_scan.py found it did).
 
 Overrides scale those synapses; everything else stays as in the connectome.
 """
@@ -29,6 +32,7 @@ class Physiology:
     al_exc_ln: float = 1.0         # scale of excitatory (positive-weight) antennal-lobe local neuron outputs
     std_u: float = 0.0             # short-term depression (see LIFParams)
     std_tau: float = 300.0
+    kc_cholinergic: bool = False   # Kenyon cell outputs stay fast excitation whatever top_nt says
 
     def lif(self, dt: float = 0.5) -> LIFParams:
         return LIFParams(dt=dt, std_u=self.std_u, std_tau=self.std_tau)
@@ -68,7 +72,10 @@ def apply(con: connectome.Connectome, phys: Physiology, meta: pd.DataFrame | Non
     crow, col, val = w.crow_indices(), w.col_indices(), w.values().clone()
     counts = crow[1:] - crow[:-1]
     nt = meta.top_nt.fillna("").to_numpy()
-    modulator = torch.repeat_interleave(torch.from_numpy(np.isin(nt, MODULATORS)), counts)
+    is_mod = np.isin(nt, MODULATORS)
+    if phys.kc_cholinergic:
+        is_mod &= (meta.cell_class.fillna("") != "Kenyon_Cell").to_numpy()
+    modulator = torch.repeat_interleave(torch.from_numpy(is_mod), counts)
     val[modulator] *= phys.modulators_fast
     # The sign in the connectivity table does not always follow top_nt, so the
     # AL override acts on the actual excitatory weights of local neurons.

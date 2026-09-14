@@ -5,11 +5,14 @@ are set to 0x (like aversive depression) and 2x, a fruit odor is presented,
 and descending-neuron rates are compared to baseline across replicates
 (Poisson noise). Positive control: direct MBON stimulation.
 
-Writes results/mb_causal_scan.json
+Writes results/mb_causal_scan.json (or --out). --kc-cholinergic / --pn-kc: the physiology of
+scripts/mb_revive_scan.py (Kenyon cell outputs alive, projection neuron -> KC drive scaled).
 """
+import argparse
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,10 +30,20 @@ STEERING = ["DNa01", "DNa02", "DNa03", "DNb05", "MDN", "DNp09", "DNp01", "oviDNa
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kc-cholinergic", action="store_true")
+    ap.add_argument("--pn-kc", type=float, default=1.0)
+    ap.add_argument("--out", default=str(config.RESULTS / "mb_causal_scan.json"))
+    args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     con = connectome.load()
     meta = neuron_meta(con)
-    base = apply(con, DEFAULT, meta)
+    phys = replace(DEFAULT, kc_cholinergic=True) if args.kc_cholinergic else DEFAULT
+    base = apply(con, phys, meta)
+    if args.pn_kc != 1.0:
+        from mb_revive_scan import scaled
+        base = scaled(base, meta, args.pn_kc, 1.0)
+    print(f"physiology {phys}, PN->KC x{args.pn_kc}")
     cls = meta.cell_class.fillna("").to_numpy()
     ct = meta.cell_type.fillna("").to_numpy()
     side = meta.side.fillna("").to_numpy()
@@ -44,7 +57,7 @@ def main():
 
     def run(weights_val, stim="odor", stim_idx=None):
         model = connectome.Connectome(con.ids, torch.sparse_csr_tensor(crow, col, weights_val, w.shape), con.index_of)
-        brain = FlyBrain(model, batch=REPS, params=DEFAULT.lif())
+        brain = FlyBrain(model, batch=REPS, params=phys.lif())
         dev = brain.device
         counts = torch.zeros(con.n, REPS, device=dev)
         if stim == "odor":
@@ -105,7 +118,7 @@ def main():
                                       "top": [(dn_name[i], round(float(diff[i]), 1)) for i in top]})
     print("direct MBON stimulation, DNs changed (|d|>2):",
           {r["mbon"]: r["dn_changed_d>2"] for r in report["stimulation"]})
-    (config.RESULTS / "mb_causal_scan.json").write_text(json.dumps(report, indent=1))
+    Path(args.out).write_text(json.dumps(report, indent=1))
     print(f"done in {time.perf_counter() - t0:.0f} s")
 
 
