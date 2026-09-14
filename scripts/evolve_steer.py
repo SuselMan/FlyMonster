@@ -70,6 +70,7 @@ def main():
     ap.add_argument("--sigma", type=float, default=0.3)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--eval", help="json {group name: genome}: evaluate fixed genomes (equal copies each) instead of evolving")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     rng = np.random.default_rng(args.seed)
@@ -115,6 +116,30 @@ def main():
     # population: weights (K) + bias; slot 0 = zero control, slot 1 = life mapping control
     ctrl_life = np.zeros(K + 1)
     ctrl_life[CANDIDATES.index("DNa01")] = ctrl_life[CANDIDATES.index("DNa02")] = 0.025 * 50   # life turn_gain
+    if args.eval:
+        groups = json.loads(Path(args.eval).read_text())
+        names = list(groups)
+        copies = B // len(names)
+        genomes = np.zeros((B, K + 1))
+        label = np.full(B, -1)
+        for g, name in enumerate(names):
+            genomes[g * copies:(g + 1) * copies] = groups[name]
+            label[g * copies:(g + 1) * copies] = g
+        fits, reach = [], []
+        for trial in range(args.trials):
+            t0 = time.perf_counter()
+            f, r = run_trial(brain, olf, wind, compass, M, genomes, rng, args.trial_s, gi, fruit, n_s, n_o, n_w, w)
+            fits.append(f)
+            reach.append(r)
+            print(f"trial {trial}: {time.perf_counter() - t0:.0f}s  " + "  ".join(
+                f"{n} {f[label == g].mean():.2f}/{r[label == g].mean():.2f}" for g, n in enumerate(names)), flush=True)
+        fits, reach = np.array(fits), np.array(reach)
+        res = {n: {"fitness": round(float(fits[:, label == g].mean()), 3), "reached": round(float(reach[:, label == g].mean()), 3),
+                   "episodes": int((label == g).sum() * args.trials),
+                   "fitness_per_episode": np.round(fits[:, label == g].ravel(), 3).tolist()} for g, n in enumerate(names)}
+        (out / f"eval_seed{args.seed}.json").write_text(json.dumps(res))
+        print(json.dumps({n: (v["fitness"], v["reached"], v["episodes"]) for n, v in res.items()}))
+        return
     gen0 = 0
     if args.resume and (out / "population.npz").exists():
         z = np.load(out / "population.npz")
