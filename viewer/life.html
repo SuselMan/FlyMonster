@@ -106,6 +106,7 @@
         <button class="tool" data-tool="spider" aria-pressed="false">🕷️ Паука</button>
       </div>
       <span id="clock">—</span>
+      <span id="mapname" class="dim"></span>
     </div>
     <div class="world">
       <canvas id="view" tabindex="0" aria-label="Мир мух. Перетаскивайте карту, колесо — масштаб, клик по мухе — её карточка"></canvas>
@@ -348,6 +349,26 @@ function buildGround() {
   for (const season of SEASON_KEYS) grounds[season] = buildSeasonGround(season);
   ground = grounds.summer;
   buildMini();
+  const A = meta.arena;
+  $("mapname").textContent = A.map_name ? `🗺 ${A.map_name}${A.map_seed != null && A.map !== "classic" ? ` (карта ${A.map_seed})` : ""}` : "";
+}
+// special biome areas: a soft tint under everything else on the ground (seasonal strength)
+const BIOME_TINT = { orchard: [120, 170, 60, .22], marsh: [30, 70, 80, .30], rocky: [150, 135, 110, .30], meadow: [200, 200, 80, .20] };
+function paintBiomes(c, season) {
+  for (const b of meta.arena.biomes || []) {
+    const t = BIOME_TINT[b.kind]; if (!t) continue;
+    const a = t[3] * (season === "winter" ? .35 : season === "autumn" && b.kind === "meadow" ? .5 : 1);
+    const g = c.createRadialGradient(b.x * PX, b.y * PX, 0, b.x * PX, b.y * PX, b.r * 1.25 * PX);
+    g.addColorStop(0, `rgba(${t[0]},${t[1]},${t[2]},${a})`); g.addColorStop(.6, `rgba(${t[0]},${t[1]},${t[2]},${a * .6})`); g.addColorStop(1, `rgba(${t[0]},${t[1]},${t[2]},0)`);
+    c.fillStyle = g; c.beginPath(); c.arc(b.x * PX, b.y * PX, b.r * 1.25 * PX, 0, 7); c.fill();
+  }
+  const den = meta.arena.den;                               // centipede den: a dark burrow under a lip of soil
+  if (den) {
+    c.save(); c.translate(den[0] * PX, den[1] * PX);
+    c.fillStyle = "rgba(90,65,40,.55)"; c.beginPath(); c.ellipse(0, 0, 9 * PX, 6 * PX, .4, 0, 7); c.fill();
+    c.fillStyle = "#140d07"; c.beginPath(); c.ellipse(0, 0, 4.5 * PX, 2.8 * PX, .4, 0, 7); c.fill();
+    c.restore();
+  }
 }
 function buildSeasonGround(season) {
   const W = meta.arena.width * PX, H = meta.arena.height * PX;
@@ -366,6 +387,7 @@ function buildSeasonGround(season) {
     g.addColorStop(0, dark ? `rgba(20,30,10,${0.18 + rnd() * 0.15})` : `rgba(230,220,150,${0.06 + rnd() * 0.08})`); g.addColorStop(1, "rgba(0,0,0,0)");
     c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
   }
+  paintBiomes(c, season);
   for (const [kind, x, y, rx, ry, a] of meta.arena.obstacles) {
     c.save(); c.translate(x * PX, y * PX); c.rotate(a);
     if (kind === "water") {

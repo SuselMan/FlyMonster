@@ -5,7 +5,7 @@ frames every 50 ms), events.jsonl, status.json. Reads commands.jsonl
 (appended by the viewer, e.g. dropping fruit) once per simulated second.
 status.json carries world counters (flights, long flights, water crossings,
 droppings, webs built, ant trips, ...).
-Usage: python scripts/life_run.py --run first [--flies 24] [--minutes 60]
+Usage: python scripts/life_run.py --run first [--flies 24] [--minutes 60] [--seed 1] [--map-seed 7] [--biome orchard|marsh|rocky|meadow] [--map classic]
 """
 import argparse
 import json
@@ -29,6 +29,9 @@ def main():
     ap.add_argument("--max-flies", type=int, default=None, help="brain slots (population cap), default flies + 2")
     ap.add_argument("--minutes", type=float, default=60.0)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--map-seed", type=int, default=None, help="map generation seed (default: --seed)")
+    ap.add_argument("--biome", choices=["orchard", "marsh", "rocky", "meadow"], default=None, help="force the special biome")
+    ap.add_argument("--map", choices=["generated", "classic"], default="generated", help="classic: the old fixed layout")
     ap.add_argument("--as-fast-as-possible", action="store_true", help="do not hold the simulation to real time")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -41,11 +44,13 @@ def main():
         (out / name).unlink(missing_ok=True)
 
     cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed)
+    cfg.arena.map, cfg.arena.map_seed, cfg.arena.biome = args.map, args.map_seed, args.biome
     life = Life(cfg)
     (out / "meta.json").write_text(json.dumps({
         "arena": life.arena.static(), "readout": list(READOUT), "genes": list(GENES), "senses": list(SENSES),
         "frame_dt": FRAME_EVERY * WORLD_DT, "chunk_s": CHUNK_S, "hatch_time": cfg.hatch_time,
         "lifespan": cfg.lifespan, "physiology": cfg.physiology.__dict__, "flies": args.flies, "max_flies": cfg.max_flies, "started": time.time(),
+        "seed": args.seed, "map": args.map, "map_seed": life.arena.map_seed, "biome": args.biome, "map_name": life.arena.map_name,
     }))
 
     frames, chunk, n_events, commands_done, t0 = [], 0, 0, 0, time.perf_counter()

@@ -27,7 +27,7 @@ flysim/
   explorer.py      backend of the brain explorer
   flappy*.py       Flappy Fly
   life/            the arena world: arena.py (food ecology, flowers, spider webs, centipedes, ants,
-                   birds, day/night, seasons, temperature), sim.py (flies)
+                   birds, day/night, seasons, temperature), mapgen.py (seeded maps, biomes), sim.py (flies)
   world.py body.py team.py   maze experiment
 scripts/
   physiology_scan.py  scan overrides against assays
@@ -84,9 +84,16 @@ connectome and the published LIF model. Around it:
   that died of hunger/age after decomposing. Droppings and bodies reuse the
   "vinegar" odorant (fermenting matter) rather than an invented new receptor
   profile. Food size, odor and taste follow the remaining amount; flies and
-  ants eat it away. The world starts with a few old droppings. Two apple
+  ants eat it away. The world starts with a few old droppings. Apple
   trees drop apples under their crowns from midsummer to mid-autumn (world
   rule, so the population can live long enough to reproduce).
+- **Maps are generated** (`life/mapgen.py`, world rule, ours): every world gets a seeded map (`--map-seed`, default the
+  world seed). Smooth value noise gives moisture and fertility fields: 1-3 ponds where it is wettest, apple trees and
+  flowers on fertile ground, the ant nest on dry ground away from water, leaf litter in moist spots near trees, scattered
+  stones. One special biome per map (`--biome`): orchard (3-4 apple trees, more flowers, but the spider starts there and a
+  centipede den is next to it), marsh (many small ponds, few stones), rocky (many stones, one small pond) or meadow (many
+  flowers). A map is accepted only if all free ground stays connected (flood fill) and ≥72% of it is free.
+  `--map classic` reproduces the old fixed layout exactly.
 - **Animals**: spiders build webs where a running heatmap says flies walk
   (or near food) and collect flies from their own webs; webs weaken with age
   and when flies tear free; centipedes hunt by sight/vibration. The world
@@ -96,7 +103,7 @@ connectome and the published LIF model. Around it:
   daylight. Flies perceive all of them only through vision salience, looming,
   odor and touch. Tuning numbers are ours (ArenaConfig).
 - **Centipedes and flowers**: centipedes age and starve to death, their large
-  bodies decompose into food, newcomers walk in from the map edge. Flowers hold
+  bodies decompose into food, newcomers walk in from the map edge (on orchard maps half of them come out of the den). Flowers hold
   refilling nectar (the "fruit" odorant at lower strength). Pollen is fly body
   state: feeding on a different flower pollinates it and may sprout a seedling.
 - **Seasons**: a 75-minute year on top of day/night. Temperature = annual +
