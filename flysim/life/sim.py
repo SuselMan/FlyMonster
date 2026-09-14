@@ -14,9 +14,14 @@ What is connectome and what is ours (see README):
   proboscis (feeding). DNp09 is shown but drives nothing: its effect depends
   on context. Walking itself is an innate generator (leg circuits are in the
   ventral nerve cord, absent from FAFB).
-- Web: sticky. Takeoff attempts of the brain add escape force; enough force
-  tears the fly free (an old, weakened web needs less, and tearing damages
-  it), otherwise the spider arrives. No dice roll.
+- Web: sticky. A stuck fly struggles on its own (body) and takeoff attempts of
+  the brain add escape force; enough force tears the fly free (an old, weakened
+  web needs less, and tearing damages it), otherwise the spider arrives after a
+  reaction delay. No dice roll.
+- Water: humidity around ponds (arena) reaches the sacculus moist cells
+  (HRN_VP5, TRN_VP1m) through the same saturating transducer as odors; thirst
+  raises the gain. Whether the brain then steers towards water is the
+  connectome's business (scripts/hygro_scan.py).
 - Food is finite: flies (and ants) eat it away. Vision sees flies, food,
   stones, the predators and ants as objects; there is no food-seeking rule.
 - Pollen is body state: a fly that fed on a flower carries its pollen and
@@ -46,7 +51,7 @@ from ..body import dn_reach
 from ..brain import FlyBrain
 from ..fastbrain import FastBrain
 from ..physiology import DEFAULT, Physiology, apply, neuron_meta
-from ..senses import Compass, Olfaction, Wind
+from ..senses import HUMIDITY, Compass, Olfaction, Wind
 from .arena import Arena, ArenaConfig
 
 WORLD_DT = 0.010          # s
@@ -69,7 +74,8 @@ STEER_EVOLVED = {"DNa02": 2.09, "DNg99": 2.55}   # elite mean of both islands; v
 # reached the apple 54% vs 8% pure wander and 0% legacy DNa01+DNa02 (results/eval_seed12.json)
 LONG_FLIGHT_MM = 80.0     # a long-mode flight that covered at least this much ground
 GENES = ("vision", "smell", "taste", "looming", "hunger", "walk")
-SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar", "bitter", "water", "dust")
+SENSES = ("fruit L", "fruit R", "vinegar L", "vinegar R", "predator", "loom", "touch", "sugar", "bitter", "water", "dust",
+          "humid")
 
 
 @dataclass
@@ -100,6 +106,9 @@ class LifeConfig:
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
     web_escape: float = 1.3       # escape force needed to tear free (fresh web: 2-3 takeoff attempts)
+    struggle: float = 0.15        # escape force per s a stuck fly gains by struggling (fresh web alone: ~11 s)
+    escape_decay: float = 0.03    # escape force lost per s
+    humid_gain: tuple = (0.3, 0.7)  # humidity drive to the moist cells: base + thirst part
     metabolism: float = 0.0005
     move_cost: float = 0.00004
     jump_cost: float = 0.01
@@ -144,11 +153,12 @@ class Life:
         # non-blocking copy per step, so the CPU never waits for the brain block that is still running
         cpu = torch.device("cpu")
         self.olf = Olfaction(self.meta, cfg.max_flies, cpu)
+        self.hyg = Olfaction(self.meta, cfg.max_flies, cpu, odorants=HUMIDITY, tau_adapt_ms=6000.0, gamma=0.5)
         self.wind_sense = Wind(self.meta, cpu)
         self.compass = Compass(self.con, self.meta, cpu)
         self.sense_col_cpu = self.sense_col.cpu()
-        self.input_idx = torch.cat([self.sense_idx.cpu(), self.olf.input_idx, self.wind_sense.input_idx,
-                                    self.compass.input_idx]).to(self.dev)
+        self.input_idx = torch.cat([self.sense_idx.cpu(), self.olf.input_idx, self.hyg.input_idx,
+                                    self.wind_sense.input_idx, self.compass.input_idx]).to(self.dev)
         self.read_mix_cpu = self.read_mix.cpu()
         pin = self.dev.type == "cuda"
         # two alternating pinned buffers: a non-blocking copy may still be queued when the next step writes
@@ -298,10 +308,11 @@ class Life:
         rates = self._rates_host[self._host_turn]
         rates.zero_()
         rates[:len(self.sense_idx), slots] = self._sensory_rates(light)
-        n_s, n_o = len(self.sense_idx), len(self.olf.input_idx)
+        n_s, n_o, n_h = len(self.sense_idx), len(self.olf.input_idx), len(self.hyg.input_idx)
         rates[n_s:n_s + n_o] = self._olfaction()
         rates[n_s:n_s + n_o, slots] *= g[:, GENES.index("smell")]
-        rates[n_s + n_o:, slots] = self._wind_and_compass()
+        rates[n_s + n_o:n_s + n_o + n_h] = self._hygro()
+        rates[n_s + n_o + n_h:, slots] = self._wind_and_compass()
         bias = self._bias_host[self._host_turn]
         bias.zero_()
         bias[slots] = 4.0 * torch.tensor(np.clip(1 - self.energy, 0, 1), dtype=torch.float32) * g[:, GENES.index("hunger")]
@@ -467,6 +478,22 @@ class Life:
         full[self.slot.astype(np.int64)] = conc
         return self.olf.rates(torch.from_numpy(full), WORLD_DT * 1000)
 
+    def _hygro(self) -> torch.Tensor:
+        """Humidity at the antennae -> sacculus moist cells. Thirst raises the gain: in the fly thirst turns
+        humid air attractive; here the sign of the response is the connectome's, only the gain is ours."""
+        B, ar = len(self.ids), self.arena
+        conc = np.zeros((B, len(self.hyg.names), 2), dtype=np.float32)
+        gain = self.cfg.humid_gain[0] + self.cfg.humid_gain[1] * np.clip(1 - self.hydration, 0, 1)
+        k = self.hyg.names.index("humid")
+        for s, sign in ((0, 1), (1, -1)):
+            ax = self.x + 1.2 * np.cos(self.heading) - sign * 0.8 * np.sin(self.heading)
+            ay = self.y + 1.2 * np.sin(self.heading) + sign * 0.8 * np.cos(self.heading)
+            conc[:, k, s] = ar.humidity(ax, ay) * gain
+        self.senses[:, 11] = conc[:, k, :].max(1)
+        full = np.zeros((self.cfg.max_flies, *conc.shape[1:]), dtype=np.float32)
+        full[self.slot.astype(np.int64)] = conc
+        return self.hyg.rates(torch.from_numpy(full), WORLD_DT * 1000)
+
     def _body(self, light: float):
         cfg, dt, ar = self.cfg, WORLD_DT, self.arena
         r = self.read
@@ -515,19 +542,20 @@ class Life:
         hop &= ~coma
         fly_long &= ~coma
 
-        # takeoff attempts while stuck in the web only add escape force
-        self.escape_force = np.maximum(self.escape_force - 0.5 * dt, 0)
+        # a stuck fly struggles on its own; takeoff attempts of the brain add escape force
+        self.escape_force = np.maximum(self.escape_force - cfg.escape_decay * dt, 0)
+        self.escape_force[stuck] += cfg.struggle * dt
         for i in np.flatnonzero(stuck & (hop | fly_long)):
             self.escape_force[i] += 0.6 if hop[i] else 0.35
             self.cooldown[i] = 0.4
+            self._event(i, "web_struggle", "бьётся в паутине")
+        for i in np.flatnonzero(stuck):
             web = ar.web(int(self.stuck[i]) - 1)
             need = cfg.web_escape * (0.4 + 0.6 * (web.strength if web else 0))    # old webs hold less
             if self.escape_force[i] >= need:
                 ar.tear_web(int(self.stuck[i]) - 1, self.t)
                 self.stuck[i] = 0
                 self._event(i, "web_free", "вырвалась из паутины")
-            else:
-                self._event(i, "web_struggle", "бьётся в паутине")
         hop &= self.stuck == 0
         fly_long &= self.stuck == 0
 
@@ -766,6 +794,7 @@ class Life:
             mask[slots] = True
             self.brain.reset(mask)
         self.olf.state[slots] = 0
+        self.hyg.state[slots] = 0
 
     def _check_overflow(self, events: bool = True, spikes: bool = True):
         # the graph path drops spikes if its fixed buffers overflow: grow the one that overflowed and re-record

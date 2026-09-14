@@ -16,10 +16,15 @@ the start distance closed (max 0.8). Two controls ride along every generation:
 zero weights (pure wander) and the life mapping (DNa01 + DNa02).
 
 Inputs to each brain: vision salience (the life VPN groups), fruit olfaction,
-wind on the antennae and the E-PG compass, constant hunger bias.
+humidity (sacculus moist cells), wind on the antennae and the E-PG compass, constant hunger bias.
+
+--target water: the goal is a pond (radius 20 mm) instead of the apple: no odor, not visible, only
+moist air around it (the arena humidity formula) reaching the moist cells at full thirst gain.
+--target both alternates apple and pond trials, for one mapping that finds both.
 
 Results -> results/evolve_steer/: log.jsonl (per generation), best.json, population.npz (resume).
 Usage: python scripts/evolve_steer.py [--pop 64] [--trial-s 40] [--trials 2] [--hours 8] [--resume]
+                                      [--target apple|water|both] [--eval genomes.json]
 """
 import argparse
 import json
@@ -35,7 +40,7 @@ from flysim import config, connectome  # noqa: E402
 from flysim.fastbrain import FastBrain  # noqa: E402
 from flysim.life.sim import Life  # noqa: E402
 from flysim.physiology import DEFAULT, apply, neuron_meta  # noqa: E402
-from flysim.senses import Compass, Olfaction, Wind  # noqa: E402
+from flysim.senses import HUMIDITY, Compass, Olfaction, Wind  # noqa: E402
 
 CANDIDATES = ["DNa01", "DNa02", "DNb05", "DNp18", "DNg99", "DNb06", "DNbe001", "DNp33", "DNg13", "DNp35",
               "DNg56", "DNp06", "DNp31", "DNa04", "DNa10", "DNp19", "DNg96", "DNg31", "DNp73", "DNa11"]
@@ -47,6 +52,9 @@ WANDER = 1.2            # rad/s^0.5
 SIZE = 400.0
 REACH = 8.0
 ODOR_SIGMA = 30.0
+POND_R = 20.0           # mm, pond radius in water trials (distances are to its edge)
+HUMID_SIGMA = 45.0      # arena humidity_sigma
+HUMID_BASE = 0.1        # arena humidity_base
 HUNGER = 2.0
 W_SCALE = 1 / 50.0      # weights act on Hz / 50
 TURN_MAX = 4.0          # rad/s
@@ -71,6 +79,8 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--eval", help="json {group name: genome}: evaluate fixed genomes (equal copies each) instead of evolving")
+    ap.add_argument("--target", choices=["apple", "water", "both"], default="apple",
+                    help="find an apple by odor (+sight, wind), a pond by humidity, or alternate trials")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     rng = np.random.default_rng(args.seed)
@@ -103,10 +113,12 @@ def main():
     print(f"{len(read_idx)} readout cells; candidate types without both sides: {missing}")
 
     olf = Olfaction(meta, B, dev)
+    hyg = Olfaction(meta, B, dev, odorants=HUMIDITY, tau_adapt_ms=6000.0, gamma=0.5)
     wind = Wind(meta, dev)
     compass = Compass(con, meta, dev)
-    input_idx = torch.cat([w.sense_idx, olf.input_idx, wind.input_idx, compass.input_idx])
-    n_s, n_o, n_w = len(w.sense_idx), len(olf.input_idx), len(wind.input_idx)
+    input_idx = torch.cat([w.sense_idx, olf.input_idx, hyg.input_idx, wind.input_idx, compass.input_idx])
+    n_s, n_o, n_h, n_w = len(w.sense_idx), len(olf.input_idx), len(hyg.input_idx), len(wind.input_idx)
+    pick = lambda trial: ("apple", "water")[trial % 2] if args.target == "both" else args.target
     brain = FastBrain(model, B, params, input_idx, torch.tensor(read_idx, device=dev), w.npf_idx,
                       steps=round(DT * 1000 / params.dt), max_spikes=256 * B, max_events=40_000 * B)
     brain.bias.fill_(HUNGER)
@@ -128,7 +140,8 @@ def main():
         fits, reach = [], []
         for trial in range(args.trials):
             t0 = time.perf_counter()
-            f, r = run_trial(brain, olf, wind, compass, M, genomes, rng, args.trial_s, gi, fruit, n_s, n_o, n_w, w)
+            f, r = run_trial(brain, olf, hyg, wind, compass, M, genomes, rng, args.trial_s, gi, fruit, n_s, n_o, n_h, n_w, w,
+                             pick(trial))
             fits.append(f)
             reach.append(r)
             print(f"trial {trial}: {time.perf_counter() - t0:.0f}s  " + "  ".join(
@@ -137,7 +150,8 @@ def main():
         res = {n: {"fitness": round(float(fits[:, label == g].mean()), 3), "reached": round(float(reach[:, label == g].mean()), 3),
                    "episodes": int((label == g).sum() * args.trials),
                    "fitness_per_episode": np.round(fits[:, label == g].ravel(), 3).tolist()} for g, n in enumerate(names)}
-        (out / f"eval_seed{args.seed}.json").write_text(json.dumps(res))
+        suffix = "" if args.target == "apple" else f"_{args.target}"
+        (out / f"eval{suffix}_seed{args.seed}.json").write_text(json.dumps(res))
         print(json.dumps({n: (v["fitness"], v["reached"], v["episodes"]) for n, v in res.items()}))
         return
     gen0 = 0
@@ -158,7 +172,8 @@ def main():
         fit = np.zeros(B)
         reached = np.zeros(B)
         for trial in range(args.trials):
-            f, r = run_trial(brain, olf, wind, compass, M, genomes, rng, args.trial_s, gi, fruit, n_s, n_o, n_w, w)
+            f, r = run_trial(brain, olf, hyg, wind, compass, M, genomes, rng, args.trial_s, gi, fruit, n_s, n_o, n_h, n_w, w,
+                             pick(trial))
             fit += f / args.trials
             reached += r
         wall = time.perf_counter() - t0
@@ -191,19 +206,21 @@ def main():
 
 
 @torch.no_grad()
-def run_trial(brain, olf, wind, compass, M, genomes, rng, trial_s, gi, fruit, n_s, n_o, n_w, w):
+def run_trial(brain, olf, hyg, wind, compass, M, genomes, rng, trial_s, gi, fruit, n_s, n_o, n_h, n_w, w, target="apple"):
     B, K = len(genomes), M.shape[0] // 2
     dev = brain.dev
-    # world: apple near the middle, wind, two stones; flies start 80-130 mm away
+    water = target == "water"
+    goal_r = POND_R if water else 0.0                          # distances are to the pond edge
+    # world: apple (or pond) near the middle, wind, two stones; flies start 80-130 mm away
     fx, fy = rng.uniform(150, 250, 2)
     wang, wspd = rng.uniform(-np.pi, np.pi), rng.uniform(0.3, 0.8)
     ux, uy = np.cos(wang), np.sin(wang)                        # direction the air flows to
     stones = rng.uniform(60, 340, (2, 2))
     d0 = rng.uniform(80, 130, B)
-    downwind = rng.random(B) < 0.7
+    downwind = rng.random(B) < (0.7 if not water else 0.0)     # humidity is not wind-borne
     a0 = np.where(downwind, wang + rng.uniform(-1.0, 1.0, B), rng.uniform(-np.pi, np.pi, B))
-    x, y = np.clip(fx + d0 * np.cos(a0), 5, SIZE - 5), np.clip(fy + d0 * np.sin(a0), 5, SIZE - 5)
-    d0 = np.hypot(x - fx, y - fy)
+    x, y = np.clip(fx + (goal_r + d0) * np.cos(a0), 5, SIZE - 5), np.clip(fy + (goal_r + d0) * np.sin(a0), 5, SIZE - 5)
+    d0 = np.hypot(x - fx, y - fy) - goal_r
     h = rng.uniform(-np.pi, np.pi, B)
     read = torch.zeros(2 * K, B, device=dev)
     base = torch.zeros(K, B, device=dev)
@@ -211,14 +228,18 @@ def run_trial(brain, olf, wind, compass, M, genomes, rng, trial_s, gi, fruit, n_
     bias = genomes[:, K]
     brain.reset_all()
     olf.state.zero_()
+    hyg.state.zero_()
     dmin, t_reach = d0.copy(), np.full(B, np.inf)
     steps = round(trial_s / DT)
     wind_speed = torch.full((B,), wspd, device=dev)
     for k in range(steps):
         rates = torch.zeros(len(brain.input_idx), B, device=dev)
-        # vision: apple (r 6 mm) and stones (r 12 mm) as objects in each hemifield (life formula)
+        # vision: apple (r 6 mm) and stones (r 12 mm) as objects in each hemifield (life formula); a pond is not seen
         drive = np.zeros((len(w.group_names), B), dtype=np.float32)
-        ox, oy, osz = np.array([fx, *stones[:, 0]]), np.array([fy, *stones[:, 1]]), np.array([6.0, 12.0, 12.0])
+        if water:
+            ox, oy, osz = stones[:, 0].copy(), stones[:, 1].copy(), np.array([12.0, 12.0])
+        else:
+            ox, oy, osz = np.array([fx, *stones[:, 0]]), np.array([fy, *stones[:, 1]]), np.array([6.0, 12.0, 12.0])
         dx, dy = ox[None] - x[:, None], oy[None] - y[:, None]
         dist = np.hypot(dx, dy) + 1e-6
         az = np.angle(np.exp(1j * (np.arctan2(dy, dx) - h[:, None])))
@@ -226,19 +247,25 @@ def run_trial(brain, olf, wind, compass, M, genomes, rng, trial_s, gi, fruit, n_
         drive[gi["vis_L"]] = 150 * np.clip((ang * np.clip(az / 0.5, 0, 1)).sum(1) / 0.5, 0, 1)
         drive[gi["vis_R"]] = 150 * np.clip((ang * np.clip(-az / 0.5, 0, 1)).sum(1) / 0.5, 0, 1)
         rates[:n_s] = torch.from_numpy(drive).to(dev)[w.sense_col]
-        # odor at the two antennae (arena plume formula)
+        # odor and humidity at the two antennae (arena plume and humidity formulas)
         conc = np.zeros((B, len(olf.names), 2), dtype=np.float32)
+        hum = np.full((B, len(hyg.names), 2), HUMID_BASE, dtype=np.float32)
         for s_i, sign in ((0, 1), (1, -1)):
             ax = x + 1.2 * np.cos(h) - sign * 0.8 * np.sin(h)
             ay = y + 1.2 * np.sin(h) + sign * 0.8 * np.cos(h)
             ddx, ddy = ax - fx, ay - fy
-            along, cross = ddx * ux + ddy * uy, -ddx * uy + ddy * ux
-            s_al = np.where(along > 0, ODOR_SIGMA * (1 + 2.5 * wspd), ODOR_SIGMA)
-            conc[:, fruit, s_i] = np.exp(-along ** 2 / (2 * s_al ** 2) - cross ** 2 / (2 * ODOR_SIGMA ** 2))
+            if water:
+                edge = np.clip(np.hypot(ddx, ddy) - POND_R, 0, None)
+                hum[:, hyg.names.index("humid"), s_i] += (1 - HUMID_BASE) * np.exp(-edge ** 2 / (2 * HUMID_SIGMA ** 2))
+            else:
+                along, cross = ddx * ux + ddy * uy, -ddx * uy + ddy * ux
+                s_al = np.where(along > 0, ODOR_SIGMA * (1 + 2.5 * wspd), ODOR_SIGMA)
+                conc[:, fruit, s_i] = np.exp(-along ** 2 / (2 * s_al ** 2) - cross ** 2 / (2 * ODOR_SIGMA ** 2))
         rates[n_s:n_s + n_o] = olf.rates(torch.from_numpy(conc).to(dev), DT * 1000)
+        rates[n_s + n_o:n_s + n_o + n_h] = hyg.rates(torch.from_numpy(hum).to(dev), DT * 1000)
         rel = np.angle(np.exp(1j * (np.arctan2(-uy, -ux) - h)))
-        rates[n_s + n_o:n_s + n_o + n_w] = wind.rates(wind_speed, torch.tensor(rel, dtype=torch.float32, device=dev))
-        rates[n_s + n_o + n_w:] = compass.rates(torch.tensor(h, dtype=torch.float32, device=dev))
+        rates[n_s + n_o + n_h:n_s + n_o + n_h + n_w] = wind.rates(wind_speed, torch.tensor(rel, dtype=torch.float32, device=dev))
+        rates[n_s + n_o + n_h + n_w:] = compass.rates(torch.tensor(h, dtype=torch.float32, device=dev))
         brain.rates.copy_(rates)
         brain.run()
         read += (M @ brain.counts / DT - read) * (DT / READ_TAU)
@@ -252,7 +279,7 @@ def run_trial(brain, olf, wind, compass, M, genomes, rng, trial_s, gi, fruit, n_
         h = np.where(hit_x, np.pi - h, h)
         h = np.where(hit_y, -h, h)
         x, y = np.clip(x, 2, SIZE - 2), np.clip(y, 2, SIZE - 2)
-        d = np.hypot(x - fx, y - fy)
+        d = np.hypot(x - fx, y - fy) - goal_r
         dmin = np.minimum(dmin, d)
         t_reach = np.where((d < REACH) & np.isinf(t_reach), k * DT, t_reach)
     if float(brain.overflow) > 0:

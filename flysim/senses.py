@@ -18,6 +18,14 @@ ODORANTS = {
     "fly": {"ORN_DA1": 1.0, "ORN_VA1d": 0.8, "ORN_VA1v": 0.6},   # pheromone-like
 }
 
+# Humidity: sacculus hygrosensory neurons (FlyWire cell_class hygrosensory). Moist-air cells (Ir68a,
+# glomerulus VP5) and the humid thermosensory VP1m cells rise with humidity; dry-air cells (Ir40a, VP4)
+# with dryness. Fed through the same saturating transducer as odors (a separate Olfaction instance).
+HUMIDITY = {
+    "humid": {"HRN_VP5": 1.0, "TRN_VP1m": 0.5},
+    "dry": {"HRN_VP4": 1.0},
+}
+
 
 class Olfaction:
     """Concentration -> saturating receptor activation -> adaptation -> firing rate.

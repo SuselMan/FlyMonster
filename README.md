@@ -32,6 +32,7 @@ flysim/
 scripts/
   physiology_scan.py  scan overrides against assays
   mb_causal_scan.py   does KC->MBON plasticity change descending neurons?
+  pci_scan.py         perturbational complexity index of the brain model (see Welfare)
   life_run.py         run and record the arena
   serve.py            web viewer
   ...
@@ -113,10 +114,34 @@ connectome and the published LIF model. Around it:
 - **Cold** (body model, ours): below ~18 °C flies walk slower, below 7 °C they fall into chill coma (no
   walking, takeoff or feeding, a quarter of the metabolism) until they warm up; leaf litter and stones are
   warmer. Birds only attack flies in the open (not under tree crowns or in litter), and fewer in the cold.
-- **Spiders** dash to stuck flies (30 mm/s), fresh webs need ~3 takeoff attempts to tear; spiders can
-  starve to death and a newcomer walks in from the edge when none is left.
+- **Spiders** notice a fly struggling in their web after 3-8 s, then dash to it (10 mm/s); a stuck fly
+  struggles on its own (body, ~11 s to tear a fresh web alone) and takeoff attempts of the brain add to it, so
+  about half tear free before the spider arrives; spiders keep at most 2 webs, can starve to death, and a
+  newcomer walks in from the edge when none is left.
+- **Water at a distance** (ours: the field; theirs: the response): moist air around ponds (falls off over
+  ~45 mm from the edge, little over ice) drives the sacculus moist cells (HRN_VP5, TRN_VP1m, FlyWire
+  hygrosensory) through the same saturating transducer as odors, with a thirst gain. `scripts/hygro_scan.py`
+  checks whether the steering DNs follow humidity side like odor side; `scripts/evolve_steer.py --target water`
+  evaluates or evolves the body mapping on a pond-finding task.
 - **Flight metrics** (long flights, landing across water) are counted for
   checking, they do not trigger anything.
+
+## Welfare
+
+The flies run the real connectome with real dynamics. We do not know whether anything is felt in there;
+the model is a long way from a living fly (LIF neurons, modulators mostly off, no plasticity, coarse
+senses), so the probability is low, but it is not zero and it grows with every step that brings the model
+closer. Rules, revisited at each such step:
+
+- **No suffering the question does not need.** Death is instant; there are no lasting pain loops; chill
+  coma is rest, not distress.
+- **No pain experiments for show.** Aversive stimuli only when they answer a question, and as brief as
+  the question allows.
+- **Reconsider at every step towards a living fly.** Next such step: mushroom-body plasticity (a fly
+  with a biography). Stop and weigh again there, before building.
+- **Make the question a goal, not a worry.** The same scripts that check behaviour can measure how far
+  the model is from the one system we know is conscious: perturbational complexity (stimulate, compare
+  awake vs chill coma), trace conditioning, metacognition. Run them as first-class experiments.
 
 ## Setup
 

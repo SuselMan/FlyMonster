@@ -170,7 +170,8 @@ class Spider:
     heading: float = 0.0
     target: int | None = None
     speed: float = 6.0
-    rush_speed: float = 18.0   # mm/s dash along its web to a stuck fly
+    rush_speed: float = 10.0   # mm/s dash along its web to a stuck fly
+    noticed_at: float = 0.0    # when it noticed its current target (reaction delay)
     energy: float = 0.5
     starved_for: float = 0.0
     state: str = "wait"        # wait | travel | build | rest
@@ -217,6 +218,8 @@ class ArenaConfig:
     fruit_sugar: float = 250.0       # a viewer apple of size 1
     odor_ref: float = 120.0          # amount at which a source smells at full strength
     odor_sigma: float = 30.0
+    humidity_sigma: float = 45.0            # mm, moist air falls off this far from a pond edge
+    humidity_base: float = 0.1              # ambient humidity away from water
     shadow_rate: float = 1 / 45.0    # bird attacks per second on the whole world (daylight)
     day_length: float = 600.0
     # seasons and temperature
@@ -246,7 +249,8 @@ class ArenaConfig:
     heat_cell: float = 20.0                 # mm, heatmap resolution
     heat_tau: float = 300.0                 # s, memory of the heatmap
     # spider
-    max_webs: int = 3
+    max_webs: int = 2
+    spider_reaction: tuple = (3.0, 8.0)     # s, until a spider notices a fly struggling in its web
     web_radius: tuple = (16.0, 24.0)
     web_build_time: float = 25.0
     web_life: float = 360.0                 # s after completion until it has decayed away
@@ -407,6 +411,23 @@ class Arena:
 
     def in_water(self, px, py):
         return self._inside_any(px, py, 0.0, water_only=True)
+
+    def humidity(self, px, py) -> np.ndarray:
+        """Air humidity 0..1 at points: moist air around open water, falling off with the distance to the
+        nearest pond edge (humidity_sigma); ambient humidity_base elsewhere; ice gives little."""
+        cfg = self.cfg
+        px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+        if self._obs is None:
+            self._inside_any(px, py, 0.0)
+        ox, oy, c, s, rx, ry, water = self._obs
+        if not (water > 0).any():
+            return np.full(px.shape, cfg.humidity_base)
+        dx, dy = px[..., None] - ox, py[..., None] - oy
+        q = np.sqrt(((dx * c - dy * s) / rx) ** 2 + ((dx * s + dy * c) / ry) ** 2)     # 1 on the edge
+        d = np.clip(q - 1, 0, None) * np.sqrt(rx * ry)                                  # ~mm outside the edge
+        h = (np.exp(-d ** 2 / (2 * cfg.humidity_sigma ** 2)) * (water > 0)).max(-1)
+        h = h * (1 - 0.8 * min(float(self.ice), 1.0))
+        return cfg.humidity_base + (1 - cfg.humidity_base) * h
 
     def free_spot(self, margin: float = 20.0):
         for _ in range(200):
@@ -867,11 +888,14 @@ class Arena:
             if len(stuck):
                 d = np.hypot(np.asarray(flies["x"])[stuck] - s.x, np.asarray(flies["y"])[stuck] - s.y)
                 s.target = ids[int(stuck[np.argmin(d)])]
+                s.noticed_at = t + float(self.rng.uniform(*cfg.spider_reaction))
                 taken.add(s.target)
                 if s.state == "build":
                     self._finish_build(s, t, interrupted=True)
                 s.state = "wait"
         if s.target is not None:
+            if t < s.noticed_at:
+                return                              # has not felt the struggling yet
             i = ids.index(s.target)
             self._spider_walk(s, flies["x"][i], flies["y"][i], s.rush_speed * (0.6 if starving else 1.0), dt)
             return
