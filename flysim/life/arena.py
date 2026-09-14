@@ -134,7 +134,7 @@ class Shadow:
     """A bird diving at a fly: angular size grows until it arrives."""
     target: int
     t_start: float
-    duration: float = 0.8
+    duration: float = 1.1
     direction: float = 0.0
     resolved: bool = False
 
@@ -168,7 +168,9 @@ class Spider:
     heading: float = 0.0
     target: int | None = None
     speed: float = 6.0
+    rush_speed: float = 30.0   # mm/s dash along its web to a stuck fly
     energy: float = 0.5
+    starved_for: float = 0.0
     state: str = "wait"        # wait | travel | build | rest
     site: tuple | None = None
     web: int | None = None     # web being built
@@ -209,7 +211,7 @@ class ArenaConfig:
     fruit_sugar: float = 250.0       # a viewer apple of size 1
     odor_ref: float = 120.0          # amount at which a source smells at full strength
     odor_sigma: float = 30.0
-    shadow_rate: float = 1 / 25.0    # bird attacks per second on the whole world (daylight)
+    shadow_rate: float = 1 / 45.0    # bird attacks per second on the whole world (daylight)
     day_length: float = 600.0
     # seasons and temperature
     year_length: float = 4500.0             # s of world time per year (75 min)
@@ -245,6 +247,9 @@ class ArenaConfig:
     web_cooldown: float = 45.0              # s between starting webs
     spider_hunger_s: float = 600.0          # full -> empty energy
     spider_meal: float = 0.6
+    spider_starve_death: float = 400.0      # s at zero energy until a spider dies
+    spider_body_food: float = 40.0
+    spider_refill: tuple = (120.0, 300.0)   # s until a newcomer when no spider is alive
     spider_hungry: float = 0.75             # builds webs below this energy
     max_spiders: int = 4                    # cap for viewer-released spiders (all spiders count)
     max_centipedes_total: int = 4           # cap for viewer-released centipedes (all centipedes count)
@@ -740,10 +745,16 @@ class Arena:
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
-        bird_season = float(np.clip((self.air_temperature(t) + 5.0) / 20.0, 0.15, 1.0))    # fewer birds in winter
+        bird_season = float(np.clip(self.air_temperature(t) / 20.0, 0.05, 1.0))    # fewer birds in the cold
         if ids and self.rng.random() < cfg.shadow_rate * self.light(t) * bird_season * dt:
-            fid = ids[int(self.rng.integers(len(ids)))]
-            if not any(s.target == fid for s in self.shadows):
+            # a bird only spots flies in the open: not under a tree crown, not in leaf litter
+            fx, fy = np.asarray(flies["x"], dtype=float), np.asarray(flies["y"], dtype=float)
+            covered = self.in_litter(fx, fy) > 0
+            for tx, ty in self.trees:
+                covered |= np.hypot(fx - tx, fy - ty) < cfg.tree_crown
+            open_ids = [f for f, c in zip(ids, covered) if not c]
+            fid = open_ids[int(self.rng.integers(len(open_ids)))] if open_ids else None
+            if fid is not None and not any(s.target == fid for s in self.shadows):
                 self.shadows.append(Shadow(fid, t, direction=float(self.rng.uniform(-np.pi, np.pi))))
         self._webs(t, dt)
         taken = {sp.target for sp in self.spiders} - {None}
@@ -752,6 +763,7 @@ class Arena:
         for c in list(self.centipedes):
             self._centipede(c, t, dt, flies)
         self._centipede_population(t, dt)
+        self._spider_population(t, dt)
         self._ants(t, dt)
 
     def _event(self, t, kind, x, y, text):
@@ -835,6 +847,7 @@ class Arena:
             s.target = None
             return                                  # does not move, hunt or build (a web in progress waits)
         s.energy = max(0.0, s.energy - dt / cfg.spider_hunger_s)
+        s.starved_for = s.starved_for + dt if s.energy <= 0 else 0.0
         starving = s.energy < cfg.starving
         if starving and not s.starving:
             self._event(t, "spider_starving", s.x, s.y, "паук ослаб от голода — медлит и отдыхает")
@@ -857,7 +870,7 @@ class Arena:
                 s.state = "wait"
         if s.target is not None:
             i = ids.index(s.target)
-            self._spider_walk(s, flies["x"][i], flies["y"][i], speed, dt)
+            self._spider_walk(s, flies["x"][i], flies["y"][i], s.rush_speed * (0.6 if starving else 1.0), dt)
             return
         if s.state == "rest":
             s.timer -= dt
@@ -899,6 +912,25 @@ class Arena:
             s.last_build = t
             if site is not None:
                 s.site, s.state = site, "travel"
+
+    def _spider_population(self, t, dt):
+        cfg = self.cfg
+        for s in list(self.spiders):
+            if s.starved_for >= cfg.spider_starve_death:
+                self.spiders.remove(s)
+                x, y = self.near_free(s.x, s.y)
+                self.add_food("carcass", t, x, y, cfg.spider_body_food, source=-1)
+                self._event(t, "spider_died", x, y, "паук умер от голода")
+                self.no_spider_since = t
+        if not self.spiders and t - getattr(self, "no_spider_since", 0.0) > self.rng.uniform(*cfg.spider_refill) \
+                and self.rng.random() < dt / 10 and float(self.air_temperature(t)) >= cfg.spider_min_temp:
+            for _ in range(50):
+                side, u = int(self.rng.integers(4)), float(self.rng.uniform(0.1, 0.9))
+                x, y = [(15, u * cfg.height), (cfg.width - 15, u * cfg.height), (u * cfg.width, 15), (u * cfg.width, cfg.height - 15)][side]
+                if not self.blocked(x, y, pad=6):
+                    self.add_spider(x, y, heading=float(self.rng.uniform(-np.pi, np.pi)))
+                    self._event(t, "spider_arrived", x, y, "с края карты пришёл новый паук")
+                    break
 
     def _hibernate(self, p, t, min_temp, name) -> bool:
         cold = float(self.temperature(t, p.x, p.y)) < min_temp - (0.0 if not p.hibernating else -1.0)   # 1 deg hysteresis

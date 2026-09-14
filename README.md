@@ -102,9 +102,12 @@ connectome and the published LIF model. Around it:
 - **Seasons**: a 75-minute year on top of day/night. Temperature = annual +
   daily cycle + analytic microclimate (leaf-litter shelters and stones warmer
   in the cold, open ground colder). Cold slows decomposition (Q10 = 2), stops
-  flowers, makes predators and ants hibernate, reduces birds. Flies do not
-  react to temperature yet: `Arena.temperature()` / `Life.fly_temperature()`
-  are the hooks, and each fly row in the frame carries its local temperature.
+  flowers, makes predators and ants hibernate, reduces birds, and slows or stops flies (below).
+- **Cold** (body model, ours): below ~18 °C flies walk slower, below 7 °C they fall into chill coma (no
+  walking, takeoff or feeding, a quarter of the metabolism) until they warm up; leaf litter and stones are
+  warmer. Birds only attack flies in the open (not under tree crowns or in litter), and fewer in the cold.
+- **Spiders** dash to stuck flies (30 mm/s), fresh webs need ~3 takeoff attempts to tear; spiders can
+  starve to death and a newcomer walks in from the edge when none is left.
 - **Flight metrics** (long flights, landing across water) are counted for
   checking, they do not trigger anything.
 

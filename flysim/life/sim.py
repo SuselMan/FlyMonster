@@ -30,6 +30,9 @@ What is connectome and what is ours (see README):
   (stops, loses dust and pollen) with aBN1. Which food is bitter, how dust
   accumulates and the thirst gain are ours.
 - Reproduction is clonal; a mature egg is laid while the fly feeds.
+- Cold (body model, ours): below ~18 C a fly walks slower, below chill_temp it falls into chill
+  coma (no walking, takeoff or feeding, low metabolism) until it warms up. Leaf litter and stones
+  are warmer in the cold (arena microclimate). The brain does not sense temperature yet.
 - Mushroom-body learning is not included (scripts/mb_causal_scan.py).
 - The genome holds physiological parameters only.
 """
@@ -84,6 +87,9 @@ class LifeConfig:
     mdn_threshold: float = 25.0   # Hz, backward walking
     feed_threshold: float = 15.0  # Hz, MN9 while touching food or water
     groom_threshold: float = 8.0  # Hz, aBN1 -> start grooming
+    chill_temp: float = 7.0       # deg C, chill coma below (1 deg hysteresis)
+    warm_temp: float = 18.0       # deg C, full walking speed above
+    coma_metabolism: float = 0.25 # fraction of energy use in chill coma
     thirst_s: float = 1500.0      # s, full -> dry
     drink_per_s: float = 0.03     # hydration per s while drinking
     juice: float = 0.004          # hydration per sugar unit eaten (fruit, nectar)
@@ -93,7 +99,7 @@ class LifeConfig:
     groom_clean: float = 0.25     # dust removed per s of grooming
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
-    web_escape: float = 1.0       # escape force needed to tear free
+    web_escape: float = 1.6       # escape force needed to tear free (fresh web: ~3 takeoff attempts)
     metabolism: float = 0.0005
     move_cost: float = 0.00004
     jump_cost: float = 0.01
@@ -169,7 +175,7 @@ class Life:
                          "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
                          "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
-                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base", "last_groom", "last_drink")
+                         "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base", "last_groom", "last_drink", "coma")
         for c in self._columns:
             shape = {"genome": (0, len(GENES)), "senses": (0, len(SENSES)), "steer_base": (0, len(STEER_TYPES))}.get(c, (0,))
             setattr(self, c, np.zeros(shape))
@@ -477,10 +483,19 @@ class Life:
         fa = ar.food_arrays(self.t)
         on_fruit = self._touching_food(fa).any(1)
         stuck = self.stuck > 0
-        feeding = on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck
-        backward = (r["MDN"] > cfg.mdn_threshold) & ~airborne & ~stuck
-        drinking = self._at_water() & ~on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck
-        busy = feeding | drinking | airborne | stuck
+        # cold: slower walking, chill coma (no walking, takeoff, feeding) with 1 deg hysteresis
+        temp = self.fly_temperature()
+        coma = ~airborne & np.where(self.coma > 0, temp < cfg.chill_temp + 1.0, temp < cfg.chill_temp)
+        for i in np.flatnonzero(coma & (self.coma == 0)):
+            self._event(i, "chill_coma", f"оцепенела от холода ({temp[i]:.0f} °C)")
+        for i in np.flatnonzero(~coma & (self.coma > 0)):
+            self._event(i, "chill_wake", "отогрелась")
+        self.coma = coma.astype(float)
+        warmth = np.clip((temp - cfg.chill_temp) / (cfg.warm_temp - cfg.chill_temp), 0, 1)
+        feeding = on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck & ~coma
+        backward = (r["MDN"] > cfg.mdn_threshold) & ~airborne & ~stuck & ~coma
+        drinking = self._at_water() & ~on_fruit & (r["MN9"] > cfg.feed_threshold) & ~airborne & ~stuck & ~coma
+        busy = feeding | drinking | airborne | stuck | coma
         was_grooming = self.grooming > 0
         self.grooming = np.where(busy, 0, np.where(self.grooming > 0, self.dust > 0.08,
                                                    r["aBN1"] > cfg.groom_threshold)).astype(float)
@@ -496,9 +511,11 @@ class Life:
         long_drive = (r["DNp02"] + r["DNp04"] + r["DNp11"]) / 3
         hop = ready & (r["GF"] > cfg.gf_threshold)
         fly_long = ready & ~hop & (long_drive > cfg.long_threshold)
+        hop &= ~coma
+        fly_long &= ~coma
 
         # takeoff attempts while stuck in the web only add escape force
-        self.escape_force = np.maximum(self.escape_force - 0.3 * dt, 0)
+        self.escape_force = np.maximum(self.escape_force - 0.5 * dt, 0)
         for i in np.flatnonzero(stuck & (hop | fly_long)):
             self.escape_force[i] += 0.6 if hop[i] else 0.35
             self.cooldown[i] = 0.4
@@ -531,11 +548,11 @@ class Life:
         airborne = self.air_left > 0
 
         walk = cfg.walk_speed * self.genome[:, GENES.index("walk")]
-        speed = walk * (0.35 + 0.65 * light)
-        speed[feeding | stuck | drinking | grooming] = 0
+        speed = walk * (0.35 + 0.65 * light) * (0.3 + 0.7 * warmth)
+        speed[feeding | stuck | drinking | grooming | coma] = 0
         speed[backward] = -0.5 * walk[backward]
         speed[airborne] = self.air_speed[airborne]
-        walking = ~airborne & ~stuck
+        walking = ~airborne & ~stuck & ~coma
         self.heading[walking] += (turn * dt + cfg.wander * np.sqrt(dt) * self.rng.normal(0, 1, B))[walking]
         self.heading[stuck] += self.rng.normal(0, 0.15, stuck.sum())       # struggling
 
@@ -640,11 +657,12 @@ class Life:
             self._event(i, "pollen_groomed", "счистила пыльцу")
         self.pollen[cleaned] = 0
         self.hydration = np.clip(self.hydration, 0, 1)
-        # 0 walk, 1 feed, 2 backward, 3 airborne, 4 stuck in web, 5 drink, 6 groom
+        # 0 walk, 1 feed, 2 backward, 3 airborne, 4 stuck in web, 5 drink, 6 groom, 7 chill coma
         self.state = np.where(airborne, 3, np.where(self.stuck > 0, 4, np.where(feeding, 1, np.where(drinking, 5,
-                              np.where(grooming, 6, np.where(backward, 2, 0))))))
+                              np.where(grooming, 6, np.where(coma, 7, np.where(backward, 2, 0)))))))
 
-        self.energy -= cfg.metabolism * dt + cfg.move_cost * np.abs(speed) * dt * (~airborne)
+        self.energy -= cfg.metabolism * dt * np.where(coma, cfg.coma_metabolism, 0.5 + 0.5 * warmth) \
+            + cfg.move_cost * np.abs(speed) * dt * (~airborne)
         self.energy = np.clip(self.energy, 0, 1)
         self.age += dt
 
