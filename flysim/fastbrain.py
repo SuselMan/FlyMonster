@@ -42,14 +42,38 @@ if _LIF is not None:
         wout[e] = w[s];
     }
     """, "fill")
+
+    # EXPERIMENTAL, off by default: measured ~200 ns per synaptic event in a real life run (GPU threads
+    # are slow at long serial loops), i.e. ~20x slower than the event-buffer path. Kept for reference.
+    # Spike delivery in one pass, work proportional to the actual events: one GPU thread per
+    # batch column walks that column's spiking neurons and adds each synapse weight into g.
+    # Columns never write the same element (index post * batch + col), so there is no race,
+    # and there is no fixed-size event buffer to scan every step.
+    _DELIVER = cupy.RawKernel(r"""
+    extern "C" __global__ void deliver(const long long* pre, const long long* colstart, const long long* crow,
+                                       const long long* post, const float* w, float* g,
+                                       const int batch, const long long kmax) {
+        int c = blockDim.x * blockIdx.x + threadIdx.x;
+        if (c >= batch) return;
+        long long k0 = colstart[c], k1 = colstart[c + 1];
+        if (k1 > kmax) k1 = kmax;
+        for (long long k = k0; k < k1; k++) {
+            long long i = pre[k];
+            long long s1 = crow[i + 1];
+            for (long long s = crow[i]; s < s1; s++) g[post[s] * batch + c] += w[s];
+        }
+    }
+    """, "deliver")
 else:
     _FILL = None
+    _DELIVER = None
 
 
 class FastBrain:
     def __init__(self, connectome: Connectome, batch: int, params: LIFParams, input_idx: torch.Tensor,
                  read_idx: torch.Tensor, bias_idx: torch.Tensor, steps: int = 20,
-                 max_spikes: int = 4096, max_events: int = 400_000, device: str = "cuda", use_kernel: bool = True):
+                 max_spikes: int = 4096, max_events: int = 400_000, device: str = "cuda", use_kernel: bool = True,
+                 deliver: bool = False):
         assert params.std_u == 0, "short-term depression is not supported in the graph path"
         self.p = p = params
         self.dev = torch.device(device)
@@ -79,8 +103,11 @@ class FastBrain:
         self.counts = torch.zeros(len(self.read_idx), batch, device=self.dev)
         self.overflow = torch.zeros((), device=self.dev)
         self.overflow_kind = torch.zeros(2, device=self.dev)       # [event buffer, spike list] overflowed
+        self._zero1 = torch.zeros(1, dtype=torch.long, device=self.dev)
+        self._zero_f = torch.zeros((), device=self.dev)
         self.graph = None
         self.use_kernel = _LIF is not None and use_kernel
+        self.deliver = self.use_kernel and deliver          # one-pass delivery (no event buffer)
         if self.use_kernel:
             self._cp = cupy.from_dlpack
             self._cp_v, self._cp_g = cupy.from_dlpack(self.v), cupy.from_dlpack(self.g)
@@ -101,6 +128,18 @@ class FastBrain:
     # --- one step, fixed shapes, no host synchronisation ---------------------
     def _step(self, slot: int):
         p, B, n = self.p, self.batch, self.n
+        if self.deliver:
+            # spikes listed column by column (flat index col * n + neuron) with per-column offsets
+            arriving = self.spike_buf[slot].t().reshape(-1)
+            flat = torch.nonzero_static(arriving, size=self.max_spikes, fill_value=n * B).squeeze(1)
+            pre = flat % n
+            colstart = torch.cat([self._zero1, torch.cumsum(self.spike_buf[slot].sum(0), 0)])
+            _DELIVER(((B + 63) // 64,), (64,), (self._cp(pre), self._cp(colstart), self._cp_crow, self._cp_post,
+                                               self._cp_w, self._cp_gflat, cupy.int32(B), cupy.int64(self.max_spikes)))
+            sp_over = (colstart[-1] > self.max_spikes).float()
+            self.overflow_kind.copy_(torch.maximum(self.overflow_kind, torch.stack([self._zero_f, sp_over])))
+            self.overflow.copy_(torch.maximum(self.overflow, sp_over))
+            return self._integrate(slot)
         if self.use_kernel:
             arriving = self.spike_buf[slot].reshape(-1)
             flat = torch.nonzero_static(arriving, size=self.max_spikes, fill_value=n * B).squeeze(1)
