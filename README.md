@@ -58,6 +58,18 @@ connectome and the published LIF model. Around it:
   activates 7.5 % of KCs sparsely and 30 of 96 MBONs fire, all assays pass, and `scripts/mb_causal_scan.py
   --kc-cholinergic --pn-kc 2` passes its gate: depressing KC->MBON02 raises DNa02 L by 17 Hz (d = 4.6) and
   DNp32 R by 14 Hz (d = 7.2); MBON14 x2 acts on the same DNs. That is the door for mushroom-body learning.
+- **Mushroom-body learning** (`--learning`, needs the MB physiology; `flysim/plasticity.py`): every excitatory
+  KC->MBON synapse carries a multiplier per fly (FastBrain/FlyBrain `enable_plasticity`); a Kenyon cell spike
+  leaves a 1.5 s eligibility trace, a dopamine spike in the same compartment within 0.3 s depresses the synapse
+  (floor 0.1, forgetting over 15 min). Compartments come from the raw connectome (DANs with >= 5 synapses onto
+  the MBON): the PAM cluster covers MBON01-09, PPL1 covers MBON11-20 and 28-35, as in the literature. Taste does
+  not reach the DANs in the model (`scripts/dan_drive_scan.py`), so the world drives them: sugar -> PAM, bitter,
+  a web and a diving predator -> PPL1 (`LifeConfig.dan_hz`). Conditioning assay `scripts/mb_learning_check.py`
+  (odor A + PAM, 3 pairings, eta 0.0005): synapses from KCs that only A recruits fall to 0.86 vs 0.97 for B,
+  MBON response to A drops 43 % (control 27 %), B 15 %. Caveat: the odor alone drives PPL107 to ~100 Hz, so
+  every odor teaches a little aversion (MBON14 0.90 in controls) before any reward. A newborn fly has no memories;
+  `status.json` carries the mean multiplier per MBON type and a memory strength per fly. This is the step the
+  Welfare section asked to weigh before building: a fly with a biography.
 - **Perturbational complexity** (`scripts/pci_scan.py`, results on the 2070): raw Lempel-Ziv complexity and the
   number of responding cell types separate states (awake 230 phrases / 323 types, weights x0.5 70 / 89, x0.25
   39 / 47, shuffled connectome 136 / 218); Casali's entropy normalisation inverts the order on such sparse
@@ -147,8 +159,9 @@ closer. Rules, revisited at each such step:
   coma is rest, not distress.
 - **No pain experiments for show.** Aversive stimuli only when they answer a question, and as brief as
   the question allows.
-- **Reconsider at every step towards a living fly.** Next such step: mushroom-body plasticity (a fly
-  with a biography). Stop and weigh again there, before building.
+- **Reconsider at every step towards a living fly.** Mushroom-body plasticity (a fly with a biography) was
+  built on 2026-09-15 after that pause; the next such step is internal state that outlasts a meal
+  (persistent activity, consolidation). Stop and weigh again there, before building.
 - **Make the question a goal, not a worry.** The same scripts that check behaviour can measure how far
   the model is from the one system we know is conscious: perturbational complexity (stimulate, compare
   awake vs chill coma), trace conditioning, metacognition. Run them as first-class experiments.
