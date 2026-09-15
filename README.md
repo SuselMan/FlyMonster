@@ -52,6 +52,16 @@ connectome and the published LIF model. Around it:
   avalanche and all odors look the same. With it: odors separable
   (corr 0.02), intensity coded, no runaway, and sugar->MN9, looming->giant
   fiber, vision->DNb05 are unchanged.
+- **Kenyon cells are cholinergic** (`Physiology.kc_cholinergic`, off by default until the life world is
+  re-tuned): FlyWire predicts dopamine for 5172 of 5177 Kenyon cells, so the modulator override had cut the whole
+  mushroom-body output. With it and projection neuron -> KC drive x2 (`scripts/mb_revive_scan.py`) an odor
+  activates 7.5 % of KCs sparsely and 30 of 96 MBONs fire, all assays pass, and `scripts/mb_causal_scan.py
+  --kc-cholinergic --pn-kc 2` passes its gate: depressing KC->MBON02 raises DNa02 L by 17 Hz (d = 4.6) and
+  DNp32 R by 14 Hz (d = 7.2); MBON14 x2 acts on the same DNs. That is the door for mushroom-body learning.
+- **Perturbational complexity** (`scripts/pci_scan.py`, results on the 2070): raw Lempel-Ziv complexity and the
+  number of responding cell types separate states (awake 230 phrases / 323 types, weights x0.5 70 / 89, x0.25
+  39 / 47, shuffled connectome 136 / 218); Casali's entropy normalisation inverts the order on such sparse
+  responses (in the cold only the driven sensory neurons "respond"), so read LZ and active types, or add PCI-ST.
 - **Photoreceptors are not used**: histamine is missing from FlyWire's
   transmitter predictions, so the first visual synapse has the wrong sign.
   Vision enters at visual projection neurons.
@@ -114,10 +124,10 @@ connectome and the published LIF model. Around it:
 - **Cold** (body model, ours): below ~18 °C flies walk slower, below 7 °C they fall into chill coma (no
   walking, takeoff or feeding, a quarter of the metabolism) until they warm up; leaf litter and stones are
   warmer. Birds only attack flies in the open (not under tree crowns or in litter), and fewer in the cold.
-- **Spiders** notice a fly struggling in their web after 3-8 s, then dash to it (10 mm/s); a stuck fly
-  struggles on its own (body, ~11 s to tear a fresh web alone) and takeoff attempts of the brain add to it, so
-  about half tear free before the spider arrives; spiders keep at most 2 webs, can starve to death, and a
-  newcomer walks in from the edge when none is left.
+- **Spiders** notice a fly struggling in their web after 2-6 s, then dash to it (10 mm/s); a stuck fly
+  struggles on its own (body, ~19 s to tear a fresh web alone) and takeoff attempts of the brain add to it
+  (world13 with 3-8 s and ~11 s: 21 of 21 tore free, too soft); spiders keep at most 2 webs, can starve to
+  death, and a newcomer walks in from the edge when none is left.
 - **Water at a distance** (ours: the field; theirs: the response): moist air around ponds (falls off over
   ~45 mm from the edge, little over ice) drives the sacculus moist cells (HRN_VP5, TRN_VP1m, FlyWire
   hygrosensory) through the same saturating transducer as odors, with a thirst gain. `scripts/hygro_scan.py`

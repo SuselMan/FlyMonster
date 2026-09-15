@@ -106,7 +106,7 @@ class LifeConfig:
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
     web_escape: float = 1.3       # escape force needed to tear free (fresh web: 2-3 takeoff attempts)
-    struggle: float = 0.15        # escape force per s a stuck fly gains by struggling (fresh web alone: ~11 s)
+    struggle: float = 0.10        # escape force per s a stuck fly gains by struggling (fresh web alone: ~19 s)
     escape_decay: float = 0.03    # escape force lost per s
     humid_gain: tuple = (0.3, 0.7)  # humidity drive to the moist cells: base + thirst part
     metabolism: float = 0.0005

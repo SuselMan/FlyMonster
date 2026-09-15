@@ -250,7 +250,7 @@ class ArenaConfig:
     heat_tau: float = 300.0                 # s, memory of the heatmap
     # spider
     max_webs: int = 2
-    spider_reaction: tuple = (3.0, 8.0)     # s, until a spider notices a fly struggling in its web
+    spider_reaction: tuple = (2.0, 6.0)     # s, until a spider notices a fly struggling in its web
     web_radius: tuple = (16.0, 24.0)
     web_build_time: float = 25.0
     web_life: float = 360.0                 # s after completion until it has decayed away
