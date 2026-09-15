@@ -35,6 +35,7 @@ def main():
     ap.add_argument("--map", choices=["generated", "classic"], default="generated", help="classic: the old fixed layout")
     ap.add_argument("--as-fast-as-possible", action="store_true", help="do not hold the simulation to real time")
     ap.add_argument("--physiology", choices=list(PRESETS), default="default", help="brain physiology preset (mb: living mushroom body)")
+    ap.add_argument("--learning", action="store_true", help="mushroom-body plasticity (implies --physiology mb)")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
@@ -45,8 +46,10 @@ def main():
     for name in ("events.jsonl", "commands.jsonl"):
         (out / name).unlink(missing_ok=True)
 
+    if args.learning and args.physiology == "default":
+        args.physiology = "mb"
     cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed,
-                     physiology=PRESETS[args.physiology])
+                     physiology=PRESETS[args.physiology], learning=args.learning)
     cfg.arena.map, cfg.arena.map_seed, cfg.arena.biome = args.map, args.map_seed, args.biome
     life = Life(cfg)
     (out / "meta.json").write_text(json.dumps({
@@ -79,7 +82,8 @@ def main():
             (out / "status.json").write_text(json.dumps({
                 "chunks": chunk + 1, "sim_s": round(life.t, 1), "wall_s": round(wall, 1),
                 "speed": round(life.t / wall, 3), "alive": len(life.ids), "eggs": len(life.eggs),
-                "births": life.births, "counters": life.frame()["counters"], "time": time.time()}))
+                "births": life.births, "counters": life.frame()["counters"], "memory": life.memory(),
+                "time": time.time()}))
             print(f"t={life.t:7.1f}s  wall {wall:7.1f}s  speed {life.t / wall:.2f}x  alive {len(life.ids)}  "
                   f"events {n_events}  {life.frame()['counters']}")
             frames, chunk = [], chunk + 1

@@ -38,7 +38,12 @@ What is connectome and what is ours (see README):
 - Cold (body model, ours): below ~18 C a fly walks slower, below chill_temp it falls into chill
   coma (no walking, takeoff or feeding, low metabolism) until it warms up. Leaf litter and stones
   are warmer in the cold (arena microclimate). The brain does not sense temperature yet.
-- Mushroom-body learning is not included (scripts/mb_causal_scan.py).
+- Mushroom-body learning (LifeConfig.learning, needs the MB physiology): dopamine-gated
+  depression of Kenyon cell -> MBON synapses, one set of multipliers per fly
+  (flysim/plasticity.py). The world supplies what the connectome does not
+  (scripts/dan_drive_scan.py): sugar on the labellum drives the reward DANs
+  (PAM), bitter taste, a web and a diving predator drive the punishment DANs
+  (PPL1). A newborn fly starts with no memories.
 - The genome holds physiological parameters only.
 """
 from dataclasses import dataclass, field
@@ -51,6 +56,7 @@ from ..body import dn_reach
 from ..brain import FlyBrain
 from ..fastbrain import FastBrain
 from ..physiology import DEFAULT, Physiology, apply, neuron_meta
+from ..plasticity import MushroomBody
 from ..senses import HUMIDITY, Compass, Olfaction, Wind
 from .arena import Arena, ArenaConfig
 
@@ -123,6 +129,9 @@ class LifeConfig:
     hatch_time: float = 90.0
     mutation: float = 0.12
     physiology: Physiology = DEFAULT
+    learning: bool = False        # mushroom-body plasticity (with the MB physiology)
+    dan_hz: float = 100.0         # PAM / PPL1 drive at full reward / punishment
+    eta: float = 0.0005           # learning rate (scripts/mb_learning_check.py: odor-specific after 3 pairings)
     arena: ArenaConfig = field(default_factory=ArenaConfig)
 
 
@@ -160,6 +169,15 @@ class Life:
         self.input_idx = torch.cat([self.sense_idx.cpu(), self.olf.input_idx, self.hyg.input_idx,
                                     self.wind_sense.input_idx, self.compass.input_idx]).to(self.dev)
         self.read_mix_cpu = self.read_mix.cpu()
+        self.n_read = len(self.read_idx)
+        self.mb = None
+        if cfg.learning:
+            if not cfg.physiology.kc_cholinergic:
+                raise ValueError("learning needs a physiology with living Kenyon cells (physiology.MB)")
+            self.mb = MushroomBody(model, self.meta, self.dev, raw=self.con, eta=cfg.eta)
+            # the plasticity reads Kenyon cell and dopamine neuron spikes after the body readouts
+            self.read_idx = torch.cat([self.read_idx, torch.tensor(self.mb.kc_idx, device=self.dev),
+                                       torch.tensor(self.mb.dan_idx, device=self.dev)])
         pin = self.dev.type == "cuda"
         # two alternating pinned buffers: a non-blocking copy may still be queued when the next step writes
         self._rates_host = [torch.zeros(len(self.input_idx), cfg.max_flies, pin_memory=pin) for _ in range(2)]
@@ -168,8 +186,12 @@ class Life:
         if self.dev.type == "cuda" and params.std_u == 0:
             self.brain = FastBrain(model, cfg.max_flies, params, self.input_idx, self.read_idx, self.npf_idx,
                                    steps=self.steps_per_world, max_spikes=96 * cfg.max_flies, max_events=20_000 * cfg.max_flies)
+            if self.mb is not None:
+                self.mb.attach(self.brain)
         else:
             self.brain = FlyBrain(model, batch=cfg.max_flies, params=params, device=self.dev)
+            if self.mb is not None:
+                self.mb.attach(self.brain)
         self.free_slots = list(range(cfg.max_flies))
         self._pending = None
         self.arena = Arena.create(cfg.arena, cfg.seed)
@@ -217,10 +239,13 @@ class Life:
             "jon_ce": np.array(con.indices(i for i in neurons.JON_CE if i in con.index_of)),
             "touch_L": np.flatnonzero((sub == "head bristle") & (side == "left")),
             "touch_R": np.flatnonzero((sub == "head bristle") & (side == "right")),
+            "pam": np.flatnonzero(np.char.startswith(ct.astype(str), "PAM")),      # reward dopamine neurons
+            "ppl1": np.flatnonzero(np.char.startswith(ct.astype(str), "PPL1")),    # punishment dopamine neurons
         }
         self.group_names = list(groups)
         self.group_gene = {"vis_L": "vision", "vis_R": "vision", "loom_L": "looming", "loom_R": "looming",
-                           "sugar": "taste", "bitter": "taste", "water": "taste", "jon_ce": None, "touch_L": None, "touch_R": None}
+                           "sugar": "taste", "bitter": "taste", "water": "taste", "jon_ce": None, "touch_L": None, "touch_R": None,
+                           "pam": None, "ppl1": None}
         idx, col = [], []
         for g, name in enumerate(self.group_names):
             idx.extend(groups[name].tolist())
@@ -352,7 +377,10 @@ class Life:
             self._overflow_host.copy_(self.brain.overflow_kind, non_blocking=True)
             self._pending = torch.cuda.Event()
             self._pending.record()
-            hz = ((self.read_mix_cpu @ prev[:, slots]) / WORLD_DT).numpy()
+            if self.mb is not None:
+                k = self.n_read + len(self.mb.kc_idx)
+                self.mb.step(self.brain.counts[self.n_read:k], self.brain.counts[k:], WORLD_DT)
+            hz = ((self.read_mix_cpu @ prev[:self.n_read, slots]) / WORLD_DT).numpy()
             if overflowed:
                 self._pending.synchronize()
                 self._check_overflow(bool(kinds[0] > 0), bool(kinds[1] > 0))
@@ -363,7 +391,10 @@ class Life:
             if len(self.npf_idx):
                 self.brain.g[self.npf_idx] += bias_d * (self.brain.p.dt / self.brain.p.tau)
             counts += self.brain.step(self.input_idx, rates_d)[self.read_idx]
-        return ((self.read_mix @ counts[:, slots.to(self.dev)]) / WORLD_DT).cpu().numpy()
+        if self.mb is not None:
+            k = self.n_read + len(self.mb.kc_idx)
+            self.mb.step(counts[self.n_read:k], counts[k:], WORLD_DT)
+        return ((self.read_mix @ counts[:self.n_read, slots.to(self.dev)]) / WORLD_DT).cpu().numpy()
 
     def _sensory_rates(self, light: float) -> torch.Tensor:
         cfg, ar, B = self.cfg, self.arena, len(self.ids)
@@ -417,6 +448,11 @@ class Life:
         at_water = self._at_water()
         drive[gi["water"]] = np.where(at_water, water, 0)
         drive[gi["jon_ce"]] = 200 * np.clip(self.dust, 0, 1) * (self.state != 3)
+        if self.mb is not None:
+            # what the connectome does not do by itself: reward and punishment reach the dopamine neurons
+            drive[gi["pam"]] = cfg.dan_hz * np.clip(sugar / 150, 0, 1)
+            drive[gi["ppl1"]] = cfg.dan_hz * np.maximum(np.maximum(np.clip(bitter / 200, 0, 1), (self.stuck > 0) * 1.0),
+                                                        np.clip((loom.max(0) / 180 - 0.5) * 2, 0, 1))
         self.senses[:, 8] = bitter / 200
         self.senses[:, 9] = at_water * water / 400
         self.senses[:, 10] = np.clip(self.dust, 0, 1)
@@ -795,6 +831,8 @@ class Life:
             self.brain.reset(mask)
         self.olf.state[slots] = 0
         self.hyg.state[slots] = 0
+        if self.mb is not None:
+            self.mb.reset(slots)
 
     def _check_overflow(self, events: bool = True, spikes: bool = True):
         # the graph path drops spikes if its fixed buffers overflow: grow the one that overflowed and re-record
@@ -808,9 +846,9 @@ class Life:
             b._alloc_events()
             b.overflow.zero_()
             b.overflow_kind.zero_()
-            state = [t.clone() for t in (b.v, b.g, b.refrac, b.spike_buf)]
+            state = [t.clone() for t in (b.v, b.g, b.refrac, b.spike_buf, b.m)]
             b.capture()
-            for dst, src in zip((b.v, b.g, b.refrac, b.spike_buf), state):
+            for dst, src in zip((b.v, b.g, b.refrac, b.spike_buf, b.m), state):
                 dst.copy_(src)
             self.events.append({"t": round(self.t, 2), "fly": -1, "kind": "info", "x": None, "y": None,
                                 "text": f"буферы мозга увеличены до {b.max_spikes} спайков / {b.max_events} событий"})
@@ -819,6 +857,16 @@ class Life:
         """Local temperature (deg C) at each fly. HOOK for future physiology (cold walking, chill coma,
         diapause, thermosensation): nothing in the body or the brain reads it yet."""
         return np.asarray(self.arena.temperature(self.t, self.x, self.y), dtype=float).reshape(len(self.ids))
+
+    def memory(self) -> dict:
+        """Mean plastic multiplier per MBON type over the living flies (1 = nothing learned), and per fly
+        the memory strength 1 - mean multiplier."""
+        if self.mb is None or not len(self.ids):
+            return {"types": {}, "flies": []}
+        cols = torch.as_tensor(self.slot.astype(np.int64), device=self.dev)
+        m = self.brain.m[:, cols]
+        return {"types": {t: round(v, 3) for t, v in self.mb.summary(cols).items()},
+                "flies": [round(float(v), 3) for v in (1 - m.mean(0)).cpu()]}
 
     def frame(self) -> dict:
         temp = self.fly_temperature()

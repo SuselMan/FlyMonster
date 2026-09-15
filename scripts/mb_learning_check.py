@@ -104,6 +104,8 @@ def main():
     def test(label):
         out = {}
         for name, odor in (("A", A), ("B", Bo)):
+            olf.state.zero_()                   # no carry-over of receptor adaptation into the test
+            play(2.0, None)
             c = play(1.0, odor, record=True)
             play(2.0, None)
             hz = c.cpu().numpy()
@@ -130,6 +132,17 @@ def main():
     torch.manual_seed(0)
     play(1.0, None)                             # settle
     pre = test("pre ")
+    # which KCs each odor recruits (control rows, pre-test): for the specificity of the memory
+    kc_a = torch.zeros(k_kc, dtype=torch.bool, device=dev)
+    kc_b = torch.zeros(k_kc, dtype=torch.bool, device=dev)
+    for name, odor, store in (("A", A, kc_a), ("B", Bo, kc_b)):
+        c = play(1.0, odor, record=True)
+        play(2.0, None)
+        store |= (c[:k_kc][:, torch.tensor(group_of == groups.index("control"), device=dev)].sum(1) > 0)
+    only_a, only_b = kc_a & ~kc_b, kc_b & ~kc_a
+    syn_a, syn_b = only_a[mb.kc_row], only_b[mb.kc_row]
+    print(f"KCs recruited: A {int(kc_a.sum())}, B {int(kc_b.sum())}, both {int((kc_a & kc_b).sum())}; "
+          f"plastic synapses from A-only KCs {int(syn_a.sum())}, B-only {int(syn_b.sum())}")
     m_before = mb.summary()
     for k in range(args.trainings):
         play(0.5, A, dan=False)                 # odor first, dopamine in its second half (forward pairing)
@@ -144,6 +157,17 @@ def main():
     for g, gname in enumerate(groups):
         cols = torch.tensor(np.flatnonzero(group_of == g), device=dev)
         mem[gname] = mb.summary(cols)
+    spec = {}
+    for g, gname in enumerate(groups):
+        cols = torch.tensor(np.flatnonzero(group_of == g), device=dev)
+        mm = brain.m[:, cols]
+        spec[gname] = {"depressed_frac": float((mm < 0.9).float().mean()), "m_syn_from_A_only_KCs": float(mm[syn_a].mean()),
+                       "m_syn_from_B_only_KCs": float(mm[syn_b].mean()), "m_all": float(mm.mean())}
+    print("\nmemory specificity (mean multiplier of synapses from KCs that only A / only B recruited; fraction < 0.9):")
+    for gname in groups:
+        r = spec[gname]
+        print(f"  {gname:10s} A-only {r['m_syn_from_A_only_KCs']:.3f}  B-only {r['m_syn_from_B_only_KCs']:.3f}  "
+              f"all {r['m_all']:.3f}  depressed {100 * r['depressed_frac']:.1f}%")
     print("\nmultipliers after training (1 = unchanged), MBON types that changed most:")
     for gname in groups:
         changed = sorted(mem[gname], key=lambda t: mem[gname][t])[:6]
@@ -155,9 +179,10 @@ def main():
     print("\nDN rates to A, pre -> post:")
     for key in pre["A"]["control"]["dn"]:
         print(f"  {key:10s} " + "  ".join(f"{g[:4]} {pre['A'][g]['dn'][key]:5.1f}->{post['A'][g]['dn'][key]:5.1f}" for g in groups))
-    out = {"args": vars(args), "pre": pre, "post": post, "memory": mem, "overflow": brain.overflow_kind.cpu().numpy().tolist(),
+    out = {"args": vars(args), "pre": pre, "post": post, "memory": mem, "specificity": spec,
+           "overflow": brain.overflow_kind.cpu().numpy().tolist(),
            "seconds": round(time.time() - t0, 1)}
-    path = config.RESULTS / "mb_learning_check.json"
+    path = config.RESULTS / f"mb_learning_check_eta{args.eta:g}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=1))
     print(f"overflow {out['overflow']}, {out['seconds']} s, wrote {path}")
