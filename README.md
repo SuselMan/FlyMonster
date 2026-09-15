@@ -129,13 +129,18 @@ connectome and the published LIF model. Around it:
   bodies decompose into food, newcomers walk in from the map edge (on orchard maps half of them come out of the den). Flowers hold
   refilling nectar (the "fruit" odorant at lower strength). Pollen is fly body
   state: feeding on a different flower pollinates it and may sprout a seedling.
-- **Seasons**: a 75-minute year on top of day/night. Temperature = annual +
+- **Seasons**: a 150-minute year (2.5 fly lifetimes) on top of day/night. Temperature = annual +
   daily cycle + analytic microclimate (leaf-litter shelters and stones warmer
   in the cold, open ground colder). Cold slows decomposition (Q10 = 2), stops
   flowers, makes predators and ants hibernate, reduces birds, and slows or stops flies (below).
 - **Cold** (body model, ours): below ~18 °C flies walk slower, below 7 °C they fall into chill coma (no
   walking, takeoff or feeding, a quarter of the metabolism) until they warm up; leaf litter and stones are
   warmer. Birds only attack flies in the open (not under tree crowns or in litter), and fewer in the cold.
+- **World 15 post-mortem (2026-09-15)**: 12 flies died within 50 min with memories forming fine: 29 of 36 eggs were
+  lost because the population was at its cap (eggs expired after 4.5 min), winter took food and water for 19 min while
+  thirst ran at full rate in chill coma, birds picked off torpid flies, ants took 63 % of the food. Rules since:
+  eggs wait for a free slot and for warmth (max 12, oldest dropped), thirst in coma runs at the coma metabolism,
+  the year is 150 min, no bird attacks below 10 C, ants carry half as much per trip.
 - **Spiders** notice a fly struggling in their web after 2-6 s, then dash to it (10 mm/s); a stuck fly
   struggles on its own (body, ~19 s to tear a fresh web alone) and takeoff attempts of the brain add to it
   (world13 with 3-8 s and ~11 s: 21 of 21 tore free, too soft); spiders keep at most 2 webs, can starve to

@@ -43,7 +43,7 @@ Animals (all scripted):
 - Birds dive at flies in daylight. Wind slowly changes; odor plumes are
   stretched downwind. Water and stones block walking but not flying.
 
-Seasons (on top of day and night): a year (default 75 min) runs spring,
+Seasons (on top of day and night): a year (default 150 min) runs spring,
 summer, autumn, winter. Temperature (deg C) = annual cycle + daily cycle +
 microclimate: leaf-litter shelters and the ground next to stones stay a few
 degrees warmer when it is cold, the open ground is colder (analytic, no
@@ -221,9 +221,10 @@ class ArenaConfig:
     humidity_sigma: float = 45.0            # mm, moist air falls off this far from a pond edge
     humidity_base: float = 0.1              # ambient humidity away from water
     shadow_rate: float = 1 / 45.0    # bird attacks per second on the whole world (daylight)
+    bird_min_temp: float = 10.0      # deg C, no bird attacks below (insectivores do not hunt in the cold)
     day_length: float = 600.0
     # seasons and temperature
-    year_length: float = 4500.0             # s of world time per year (75 min)
+    year_length: float = 9000.0             # s of world time per year (150 min: a fly lives 45-60 min)
     year_start: float = 0.30                # year phase at t=0: 0 spring, .25 summer, .5 autumn, .75 winter
     temp_mean: float = 13.0                 # deg C
     temp_season_amp: float = 12.0           # midsummer mean + amp, midwinter mean - amp
@@ -298,7 +299,7 @@ class ArenaConfig:
     ant_speed: float = 16.0
     ant_carry_speed: float = 11.0
     ant_sense: float = 45.0                 # mm, finds food by smell/sight within this range
-    ant_bite: float = 4.0                   # units carried per trip
+    ant_bite: float = 2.0                   # units carried per trip (was 4: ants took 63 % of the food in world15)
     ant_eat_rate: float = 3.0               # units/s while taking a portion
     ant_search: float = 90.0                # s of searching before returning home empty
     ant_nest_rest: float = 6.0
@@ -769,8 +770,9 @@ class Arena:
         # birds
         self.shadows = [s for s in self.shadows if t - s.t_start <= s.duration + 0.3]
         ids = flies["ids"]
-        bird_season = float(np.clip(self.air_temperature(t) / 20.0, 0.05, 1.0))    # fewer birds in the cold
-        if ids and self.rng.random() < cfg.shadow_rate * self.light(t) * bird_season * dt:
+        air = self.air_temperature(t)
+        bird_season = float(np.clip(air / 20.0, 0.05, 1.0)) if air >= cfg.bird_min_temp else 0.0   # fewer birds in the cold, none below
+        if ids and bird_season and self.rng.random() < cfg.shadow_rate * self.light(t) * bird_season * dt:
             # a bird only spots flies in the open: not under a tree crown, not in leaf litter
             fx, fy = np.asarray(flies["x"], dtype=float), np.asarray(flies["y"], dtype=float)
             covered = self.in_litter(fx, fy) > 0

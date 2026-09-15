@@ -131,6 +131,8 @@ class LifeConfig:
     egg_interval: float = 120.0
     egg_energy: float = 0.12
     egg_min_energy: float = 0.3
+    max_eggs: int = 12            # eggs wait for a free brain slot (the oldest is dropped beyond this)
+    hatch_min_temp: float = 8.0   # deg C at the egg: no hatching in the cold
     hatch_time: float = 90.0
     mutation: float = 0.12
     physiology: Physiology = DEFAULT
@@ -291,7 +293,9 @@ class Life:
         return born
 
     def _hatch(self):
-        ready = [e for e in self.eggs if self.t - e.laid >= self.cfg.hatch_time]
+        # eggs wait for a free brain slot and for warmth (world15 lost 29 of 36 eggs to a full population)
+        ready = [e for e in self.eggs if self.t - e.laid >= self.cfg.hatch_time
+                 and float(self.arena.temperature(self.t, np.array([e.x]), np.array([e.y]))[0]) >= self.cfg.hatch_min_temp]
         room = len(self.free_slots)
         for e in ready[:max(room, 0)]:
             self.eggs.remove(e)
@@ -301,9 +305,8 @@ class Life:
             self.births += 1
             self.events.append({"t": round(self.t, 2), "fly": fid, "kind": "born", "parent": int(e.parent),
                                 "text": f"вылупилась (поколение {e.generation}, мать №{e.parent})"})
-        for e in ready[max(room, 0):]:
-            if self.t - e.laid > 3 * self.cfg.hatch_time:
-                self.eggs.remove(e)
+        while len(self.eggs) > self.cfg.max_eggs:
+            self.eggs.pop(0)
 
     # --- one world step -----------------------------------------------------
     def _user_flies(self):
@@ -725,7 +728,7 @@ class Life:
             self.eggs_laid[i] += 1
             self._event(i, "egg", "отложила яйцо")
         # thirst, drinking, juice from food; dust from the ground, litter and flowers; grooming cleans it (and the pollen)
-        self.hydration -= dt / cfg.thirst_s
+        self.hydration -= dt / cfg.thirst_s * np.where(coma, cfg.coma_metabolism, 1.0)   # a torpid fly loses little water
         self.hydration[drinking] += cfg.drink_per_s * dt
         walking_now = ~airborne & ~stuck & (np.abs(speed) > 0)
         self.dust += dt * walking_now * np.where(ar.in_litter(self.x, self.y) > 0, cfg.dust_litter, cfg.dust_ground)
