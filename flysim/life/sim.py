@@ -10,7 +10,8 @@ What is connectome and what is ours (see README):
 - Body mapping uses descending neurons with published roles only:
   DNa01/DNa02 ipsilateral turning while walking, MDN backward walking,
   DNp01 giant fiber short escape hop, DNp02/DNp04/DNp11 long-mode takeoff
-  (a flight whose duration the body sets; no steering in the air), MN9
+  (a flight whose duration the body sets; in the air the same steering
+  command is spent in body saccades), MN9
   proboscis (feeding). DNp09 is shown but drives nothing: its effect depends
   on context. Walking itself is an innate generator (leg circuits are in the
   ventral nerve cord, absent from FAFB).
@@ -111,8 +112,10 @@ class LifeConfig:
     groom_clean: float = 0.25     # dust removed per s of grooming
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
-    saccade_rate: float = 2.5     # per s in flight: body saccades (real flies turn ~90 deg a few times a second)
-    saccade_angle: tuple = (0.5, 1.6)   # rad, size of a saccade
+    saccade_rate: float = 1.0     # per s in flight: spontaneous body saccades on top of the steered ones
+    saccade_angle: tuple = (0.5, 1.6)   # rad, size of a spontaneous saccade (steered ones are capped at the max)
+    air_steer: float = 1.0        # gain of the brain's turn command in flight
+    saccade_threshold: float = 0.6  # rad of accumulated turn intent that fires a steered saccade
     web_escape: float = 1.3       # escape force needed to tear free (fresh web: 2-3 takeoff attempts)
     struggle: float = 0.10        # escape force per s a stuck fly gains by struggling (fresh web alone: ~19 s)
     escape_decay: float = 0.03    # escape force lost per s
@@ -204,9 +207,9 @@ class Life:
         self.dead: list = []
         self.births = 0
         # stuck: id+1 of the web a fly is stuck on (0 = free)
-        self.counters = {"hops": 0, "flights": 0, "long_flights": 0, "water_crossings": 0, "eaten": 0.0}
+        self.counters = {"hops": 0, "flights": 0, "long_flights": 0, "water_crossings": 0, "landings_by_food": 0, "eaten": 0.0}
         self._columns = ("x", "y", "heading", "energy", "age", "lifespan", "air_left", "air_total", "air_speed",
-                         "air_height", "cooldown", "jumped_at", "state", "turn_base", "last_feed", "last_egg",
+                         "air_height", "cooldown", "jumped_at", "state", "turn_base", "turn_intent", "last_feed", "last_egg",
                          "generation", "parent", "stuck", "escape_force", "touch_left", "slot", "genome", "senses",
                          "air_x0", "air_y0", "air_water", "air_long", "pollen", "pollen_t",
                          "meals", "eggs_laid", "flights", "born_t", "hydration", "dust", "grooming", "steer_base", "last_groom", "last_drink", "coma")
@@ -622,9 +625,15 @@ class Life:
         walking = ~airborne & ~stuck & ~coma
         self.heading[walking] += (turn * dt + cfg.wander * np.sqrt(dt) * self.rng.normal(0, 1, B))[walking]
         self.heading[stuck] += self.rng.normal(0, 0.15, stuck.sum())       # struggling
-        # flight is straight segments joined by body saccades (no steering in the air: the brain's flight
-        # circuits are not read); hops stay straight
-        sacc = airborne & (self.air_height >= 1.0) & (self.rng.random(B) < cfg.saccade_rate * dt)
+        # flight: straight segments joined by body saccades. The brain's turn command (the same DN mapping as
+        # on the ground) accumulates as intent and is spent in a saccade once it is large enough; spontaneous
+        # saccades come on top. Hops stay straight.
+        flying = airborne & (self.air_height >= 1.0)
+        self.turn_intent = np.where(flying, self.turn_intent + cfg.air_steer * turn * dt, 0.0)
+        fire = flying & (np.abs(self.turn_intent) >= cfg.saccade_threshold)
+        self.heading[fire] += np.clip(self.turn_intent[fire], -cfg.saccade_angle[1], cfg.saccade_angle[1])
+        self.turn_intent[fire] = 0.0
+        sacc = flying & ~fire & (self.rng.random(B) < cfg.saccade_rate * dt)
         n_sacc = int(sacc.sum())
         if n_sacc:
             self.heading[sacc] += self.rng.choice([-1.0, 1.0], n_sacc) * self.rng.uniform(*cfg.saccade_angle, n_sacc)
@@ -766,6 +775,11 @@ class Life:
                 self.counters["water_crossings"] += 1
                 self._event(i, "water_crossed", f"перелетела через воду ({dist:.0f} мм)")
             self.air_water[i] = 0
+            if self.air_long[i]:
+                fa = self.arena.food_arrays(self.t)
+                if len(fa["x"]) and float(np.min(np.hypot(fa["x"] - self.x[i], fa["y"] - self.y[i]) - fa["r"])) < 15.0:
+                    self.counters["landings_by_food"] += 1
+                    self._event(i, "landed_by_food", "села рядом с едой")
 
     def _thaw_rescue(self):
         # when ice melts under walking flies, the body is put on the nearest shore (world rule, no drowning)

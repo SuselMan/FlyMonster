@@ -37,6 +37,8 @@ def main():
     ap.add_argument("--as-fast-as-possible", action="store_true", help="do not hold the simulation to real time")
     ap.add_argument("--physiology", choices=list(PRESETS), default="default", help="brain physiology preset (mb: living mushroom body)")
     ap.add_argument("--learning", action="store_true", help="mushroom-body plasticity (implies --physiology mb)")
+    ap.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
+                    help="override a LifeConfig field (numbers, tuples), e.g. --set air_steer=0 --set flight=1.6,90")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
@@ -52,6 +54,13 @@ def main():
     cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed,
                      physiology=PRESETS[args.physiology], learning=args.learning)
     cfg.arena.map, cfg.arena.map_seed, cfg.arena.biome = args.map, args.map_seed, args.biome
+    for item in args.set:
+        key, _, value = item.partition("=")
+        if not hasattr(cfg, key):
+            raise SystemExit(f"--set: LifeConfig has no field {key!r}")
+        parsed = tuple(float(v) for v in value.split(",")) if "," in value else float(value)
+        setattr(cfg, key, type(getattr(cfg, key))(parsed) if isinstance(getattr(cfg, key), (int, bool)) else parsed)
+        print(f"config {key} = {getattr(cfg, key)}")
     life = Life(cfg)
     (out / "meta.json").write_text(json.dumps({
         "arena": life.arena.static(), "readout": list(READOUT), "genes": list(GENES), "senses": list(SENSES),
