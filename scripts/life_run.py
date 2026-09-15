@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import numpy as np  # noqa: E402
 
 from flysim import config  # noqa: E402
 from flysim.life.sim import GENES, READOUT, SENSES, WORLD_DT, Life, LifeConfig  # noqa: E402
@@ -43,7 +44,7 @@ def main():
     (out / "chunks").mkdir(parents=True, exist_ok=True)
     for f in (out / "chunks").glob("*.json"):
         f.unlink()
-    for name in ("events.jsonl", "commands.jsonl"):
+    for name in ("events.jsonl", "commands.jsonl", "census.jsonl"):
         (out / name).unlink(missing_ok=True)
 
     if args.learning and args.physiology == "default":
@@ -79,10 +80,15 @@ def main():
                     f.write(json.dumps(e, ensure_ascii=False) + "\n")
             n_events = len(life.events)
             wall = time.perf_counter() - t0
+            mem = life.memory()
+            with open(out / "census.jsonl", "a", encoding="utf-8") as f:     # one light row per chunk for the whole-run charts
+                genes = np.round(life.genome.mean(0), 3).tolist() if len(life.ids) else None
+                f.write(json.dumps({"t": round(life.t, 1), "alive": len(life.ids), "genes": genes,
+                                    "memory": round(float(np.mean(mem["flies"])), 4) if mem["flies"] else None}) + "\n")
             (out / "status.json").write_text(json.dumps({
                 "chunks": chunk + 1, "sim_s": round(life.t, 1), "wall_s": round(wall, 1),
                 "speed": round(life.t / wall, 3), "alive": len(life.ids), "eggs": len(life.eggs),
-                "births": life.births, "counters": life.frame()["counters"], "memory": life.memory(),
+                "births": life.births, "counters": life.frame()["counters"], "memory": mem,
                 "time": time.time()}))
             print(f"t={life.t:7.1f}s  wall {wall:7.1f}s  speed {life.t / wall:.2f}x  alive {len(life.ids)}  "
                   f"events {n_events}  {life.frame()['counters']}")

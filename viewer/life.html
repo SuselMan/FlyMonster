@@ -37,6 +37,9 @@
   .toolbar .group { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   #clock { font-variant-numeric:tabular-nums; color:var(--faded); }
   .world { position:relative; border-radius:16px; overflow:hidden; box-shadow:0 0 0 1px #0a0d09, 0 24px 70px rgba(0,0,0,.55); }
+  .timeline { margin:8px 0 4px; }
+  #tl { display:block; width:100%; height:44px; cursor:pointer; touch-action:none; border-radius:8px; background:var(--bench); }
+  .timeline .note { font-size:12px; color:var(--faded); margin:3px 0 0; }
   #view { display:block; width:100%; height:min(74vh, 820px); cursor:grab; touch-action:none; }
   #view.dragging { cursor:grabbing; } #view.placing { cursor:copy; }
   #mini { position:absolute; right:12px; bottom:12px; width:210px; height:140px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.5); cursor:grab; touch-action:none; }
@@ -71,19 +74,28 @@
   #flylist .mini i { display:block; height:100%; }
   #flylist .sub { color:var(--faded); font-size:12px; }
   #feed .t { color:var(--faded); font-variant-numeric:tabular-nums; margin-right:8px; }
-  .obit { margin-top:22px; } .obit-wrap { overflow-x:auto; max-height:320px; overflow-y:auto; }
+  .fold { margin:10px 2px 0; } .fold summary { cursor:pointer; color:var(--faded); font-family:Alegreya, Georgia, serif; font-style:italic; font-size:17px; }
+  .fold[open] summary { margin-bottom:6px; }
+  .obit-wrap { overflow-x:auto; max-height:360px; overflow-y:auto; }
   #obit { border-collapse:collapse; width:100%; font-size:14px; }
   #obit th { text-align:left; font-weight:500; color:var(--faded); padding:4px 10px 4px 0; position:sticky; top:0; background:var(--night); }
   #obit td { padding:4px 10px 4px 0; border-top:1px solid rgba(236,229,207,.08); white-space:nowrap; }
   #obit tr[data-i] { cursor:pointer; } #obit tr[data-i]:hover td { background:rgba(236,229,207,.05); }
-  .census { margin-top:22px; } #pop { display:block; width:100%; }
+  #pop { display:block; width:100%; }
+  #stats .readings { margin:4px 0 10px; }
   @media (max-width:1100px) { .station { grid-template-columns:1fr; } .masthead nav { margin-left:0; } #mini { width:150px; height:100px; } }
+  @media (max-width:640px) {
+    body { padding:10px 12px; } .masthead h1 { font-size:26px; } .masthead h1 small { display:block; margin:2px 0 0; }
+    #view { height:min(60vh, 520px); } #mini { width:110px; height:74px; right:8px; bottom:8px; }
+    .hint { display:none; } .toolbar { gap:6px 8px; } .tab { font-size:16px; padding:2px 10px; }
+    .key { grid-template-columns:1fr; } #flylist li { grid-template-columns:40px 1fr 44px 44px; }
+    #feed, #flylist, .obit-wrap { max-height:50vh; }
+  }
 </style>
 </head>
 <body>
 <header class="masthead">
   <h1>Жизнь мух<small>У каждой мухи — свой полный мозг из 138 639 нейронов</small></h1>
-  <div class="readings" id="status"></div>
   <nav><select id="run" aria-label="Прогон"></select><a href="/viewer/brain.html">Мозг</a><a href="/viewer/flappy.html">Flappy Fly</a></nav>
 </header>
 <div class="station">
@@ -114,6 +126,11 @@
       <div class="hint" id="hint">Перетаскивайте карту, колесо — масштаб, клик по мухе — карточка</div>
       <div id="toast"></div>
     </div>
+    <div class="timeline">
+      <canvas id="tl" aria-label="Шкала времени: клик или перетаскивание — перемотка"></canvas>
+      <p class="note">Шкала всего прогона: клик или перетаскивание — перемотка в любое место; стрелки ←/→ — 10 с, с Shift — минута. Метки: <span style="color:#d9564a">▮</span> гибель, <span style="color:#98bd6c">▮</span> рождение, <span style="color:#f0b54c">▮</span> паутина, <span style="color:#86b5d1">▮</span> питьё. Светлые полосы — уже загруженные куски записи.</p>
+    </div>
+    <details class="fold"><summary>Обозначения</summary>
     <div class="key">
       <div><span class="sym" style="color:var(--moss)">◔</span>кольцо — прожитая жизнь (полное = 60 мин)</div>
       <div><span class="sym">✦</span>блёстки — только что вылупилась</div>
@@ -136,15 +153,12 @@
       <div><span class="sym">🍂</span>подстилка из листьев — зимой там теплее</div>
       <div><span class="sym">❄️</span>зима: цветы вянут, хищники и муравьи в спячке</div>
     </div>
-    <p class="note" style="margin-top:10px">Поворот задают нейроны DNa01 и DNa02, задний ход — MDN, прыжок — гигантское волокно DNp01,
-      долгий перелёт — DNp02/DNp04/DNp11, еду — моторный нейрон хоботка MN9. Шаг и полёт исполняет модель тела: нейроны ног и крыльев лежат
-      в брюшной нервной цепочке, их нет в данных мозга. Паук, сороконожки, муравьи и цветы — скриптовые, но мухи видят их только глазами, усиками и касанием.
-      Яблоки появляются, только когда их кладёт зритель; он же может выпустить ещё пауков и сороконожек. Остальная еда — помёт хищников, разложившиеся тела и нектар цветов.</p>
+    </details>
   </section>
   <aside>
-    <div class="label">
-      <h2 id="flyTitle">Выберите муху</h2>
-      <div id="flyInfo" class="dim">Кликните по мухе — здесь появится её карточка: возраст, родословная, что чувствуют усики и почему она так себя ведёт.</div>
+    <div class="label" id="card" hidden>
+      <h2 id="flyTitle"></h2>
+      <div id="flyInfo" class="dim"></div>
       <div class="caption" id="caption" hidden></div>
       <div id="nose"></div>
       <div id="flyBars"></div>
@@ -153,23 +167,21 @@
       <div class="tabs" role="tablist">
         <button role="tab" class="tab on" data-tab="feed" aria-selected="true">События</button>
         <button role="tab" class="tab" data-tab="flies" aria-selected="false">Мухи</button>
+        <button role="tab" class="tab" data-tab="obit" aria-selected="false">Некролог</button>
+        <button role="tab" class="tab" data-tab="stats" aria-selected="false">Статистика</button>
       </div>
       <ul id="feed" role="tabpanel"></ul>
       <ul id="flylist" role="tabpanel" hidden></ul>
+      <div id="obitpanel" role="tabpanel" hidden>
+        <div class="obit-wrap"><table id="obit"></table></div>
+        <p class="note">Клик по строке — перемотка к последним секундам мухи.</p>
+      </div>
+      <div id="stats" role="tabpanel" hidden>
+        <div class="readings" id="status"></div>
+        <details class="fold" open><summary>Перепись: число мух и их гены</summary><canvas id="pop" height="170"></canvas></details>
+      </div>
     </div>
   </aside>
-  <section class="obit" style="grid-column:1/-1">
-    <h3>Некролог</h3>
-    <div class="obit-wrap"><table id="obit"></table></div>
-    <p class="note">Клик по строке — перемотка к последним секундам мухи. Причину пишет мир: птица, паук, сороконожка, голод, старость.</p>
-  </section>
-  <section class="census" style="grid-column:1/-1">
-    <h3>Перепись: сколько мух и как меняются их гены</h3>
-    <canvas id="pop" height="170"></canvas>
-    <p class="note">Размножение клональное: все мухи — копии проводки одной самки из FlyWire, поэтому спаривания нет. Гены — только
-      физиологические параметры (зрение, обоняние, вкус, реакция на тень, чувствительность к голоду, скорость ходьбы). Память не наследуется;
-      обучение грибовидных тел не включено — в этой модели изменение синапсов KC→MBON не меняет нисходящие нейроны.</p>
-  </section>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -186,7 +198,37 @@ const FEED_ICON = { born: "🐣", egg: "🥚", feed: "🍯", hop: "⤴", flight:
   user_fly: "🪰", chill_coma: "🥶", chill_wake: "☀️", spider_died: "💀", spider_arrived: "🕷️", drink: "💧", groom: "🧹", pollen_groomed: "🌼", user_spider: "🕷️", user_centipede: "🐛", user_cap: "🚫", user_blocked: "🚫", ...DEATH_ICON };
 const SEASON_RU = { spring: "🌱 Весна", summer: "🌻 Лето", autumn: "🍁 Осень", winter: "❄️ Зима" };
 const COLORS = { fruit: [255, 179, 71], vinegar: [203, 232, 107], predator: [165, 139, 255], pheromone: [127, 227, 193] };
-let run = null, meta = null, status = null, frames = [], chunkLoaded = -1, events = [];
+let run = null, meta = null, status = null, events = [], census = [];
+// The whole recording stays on disk in 10 s chunks; the viewer keeps a window of chunks around the
+// playhead and fetches any other on demand, so the playhead can go anywhere in the run.
+const chunks = new Map(), loading = new Set();
+const chunkS = () => meta?.chunk_s || 10, frameDt = () => meta?.frame_dt || 0.05;
+const chunkIndex = t => Math.floor(t / chunkS());
+const lastT = () => status ? Math.max(0, status.chunks * chunkS() - frameDt()) : 0;    // newest frame on disk
+function evictChunks() {
+  if (chunks.size <= 150) return;
+  const cur = chunkIndex(simT ?? 0);
+  const far = [...chunks.keys()].sort((a, b) => Math.abs(b - cur) - Math.abs(a - cur));
+  while (chunks.size > 120 && far.length) chunks.delete(far.shift());
+}
+async function loadChunk(i) {
+  if (i < 0 || chunks.has(i) || loading.has(i) || !status || i >= status.chunks) return;
+  loading.add(i);
+  try {
+    const c = await getJSON(`/results/${run}/chunks/chunk_${String(i).padStart(5, "0")}.json`);
+    for (const fr of c.frames) if (!fr.spiders) fr.spiders = fr.spider ? [fr.spider] : [];   // old recordings: one spider
+    chunks.set(i, c.frames); evictChunks();
+  } catch (e) {} finally { loading.delete(i); }
+}
+function history(t, seconds, step = 1) {
+  // frames of the last `seconds` before t that are loaded (every `step`-th), oldest first
+  const out = [];
+  for (let i = chunkIndex(Math.max(0, t - seconds)); i <= chunkIndex(t); i++) {
+    const c = chunks.get(i); if (!c) continue;
+    for (let k = 0; k < c.length; k += step) if (c[k].t >= t - seconds && c[k].t <= t) out.push(c[k]);
+  }
+  return out;
+}
 let simT = null, playing = true, selected = null, follow = false, smellMode = false, placing = null;   // placing: null | "fruit" | "centipede" | "spider"
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const ri = (a, b) => a + Math.random() * (b - a);
@@ -205,15 +247,10 @@ async function refresh() {
   if (!meta) { meta = await getJSON(`/results/${run}/meta.json`).catch(() => null); if (meta?.arena.nest) { await spritesReady; buildGround(); camera.reset(); } }
   if (!meta || !meta.arena.nest) return;
   status = await getJSON(`/results/${run}/status.json`).catch(() => null);
-  if (status && chunkLoaded < 0) chunkLoaded = Math.max(-1, status.chunks - 31);
-  while (status && chunkLoaded + 1 < status.chunks) {
-    const c = await getJSON(`/results/${run}/chunks/chunk_${String(chunkLoaded + 1).padStart(5, "0")}.json`).catch(() => null);
-    if (!c) break;
-    for (const fr of c.frames) if (!fr.spiders) fr.spiders = fr.spider ? [fr.spider] : [];   // old recordings: one spider
-    frames.push(...c.frames); chunkLoaded++;
-    if (frames.length > 20 * 60 * 10) frames.splice(0, frames.length - 20 * 60 * 10);
-  }
+  if (status) { loadChunk(status.chunks - 1); loadChunk(status.chunks - 2); }
   const r = await fetch(`/results/${run}/events.jsonl`); if (r.ok) events = (await r.text()).split("\n").filter(Boolean).map(JSON.parse);
+  const cr = await fetch(`/results/${run}/census.jsonl`).catch(() => null);
+  if (cr && cr.ok) census = (await cr.text()).split("\n").filter(Boolean).map(JSON.parse);
   if (status) {
     const stopped = Date.now() / 1000 - status.time > 120;
     const chip = (v, label) => `<div class="reading"><b>${v}</b> <span>${label}</span></div>`;
@@ -222,16 +259,20 @@ async function refresh() {
       (status.counters ? chip(status.counters.long_flights, "долгих перелётов") + chip(status.counters.water_crossings, "через воду") +
         chip(status.counters.pollinations ?? 0, "опылений") : "");
   }
-  if (simT == null && frames.length) simT = Math.max(frames[0].t, frames[frames.length - 1].t - 3);
+  if (simT == null && status && status.chunks) simT = Math.max(0, lastT() - 3);
   renderFeed(); renderObit(); drawPop();
 }
-$("run").onchange = e => { run = e.target.value; meta = null; frames = []; chunkLoaded = -1; simT = null; obitKey = ""; };
+$("run").onchange = e => { run = e.target.value; meta = null; status = null; chunks.clear(); census = []; simT = null; obitKey = ""; };
 function frameAt(t) {
-  if (!frames.length || t == null) return null;
-  const dt = frames.length > 1 ? frames[1].t - frames[0].t : 0.05;
-  const x = (t - frames[0].t) / dt, i = Math.max(0, Math.min(frames.length - 1, Math.floor(x)));
-  return [frames[i], frames[Math.min(i + 1, frames.length - 1)], Math.max(0, Math.min(1, x - i)), i];
+  if (t == null || !meta || !status) return null;
+  const i = chunkIndex(t), c = chunks.get(i);
+  loadChunk(i); loadChunk(i + 1);
+  if (!c || !c.length) return null;
+  const x = (t - c[0].t) / frameDt(), k = Math.max(0, Math.min(c.length - 1, Math.floor(x)));
+  const next = k + 1 < c.length ? c[k + 1] : (chunks.get(i + 1)?.[0] || c[k]);
+  return [c[k], next, Math.max(0, Math.min(1, x - k)), k];
 }
+function seek(t) { simT = Math.max(0, Math.min(lastT(), t)); }
 
 // ============ camera ============
 const view = $("view");
@@ -287,7 +328,51 @@ $("mini").addEventListener("pointermove", e => { if (miniDrag) { e.stopPropagati
 $("mini").addEventListener("pointerup", e => { e.stopPropagation(); miniDrag = false; });
 $("mini").addEventListener("pointercancel", () => { miniDrag = false; });
 $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; };
-$("live").onclick = () => { if (frames.length) simT = frames[frames.length - 1].t - 1; };
+$("live").onclick = () => { if (status) seek(lastT() - 1); };
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || simT == null) return;
+  const step = e.shiftKey ? 60 : 10;
+  if (e.key === "ArrowLeft") { seek(simT - step); e.preventDefault(); }
+  if (e.key === "ArrowRight") { seek(simT + step); e.preventDefault(); }
+  if (e.key === " ") { playing = !playing; $("play").textContent = playing ? "⏸" : "▶"; e.preventDefault(); }
+});
+// ============ timeline ============
+const tl = $("tl");
+let tlDrag = false;
+const tlX = t => 8 + t / Math.max(1, lastT()) * (tl.clientWidth - 16);
+const tlT = x => Math.max(0, Math.min(lastT(), (x - 8) / Math.max(1, tl.clientWidth - 16) * lastT()));
+tl.addEventListener("pointerdown", e => { tlDrag = true; tl.setPointerCapture(e.pointerId); seek(tlT(e.offsetX)); });
+tl.addEventListener("pointermove", e => { if (tlDrag) seek(tlT(e.offsetX)); });
+tl.addEventListener("pointerup", () => { tlDrag = false; });
+tl.addEventListener("pointercancel", () => { tlDrag = false; });
+function drawTimeline() {
+  const dpr = devicePixelRatio || 1, W = tl.clientWidth, H = tl.clientHeight;
+  if (!W) return;
+  if (tl.width !== Math.round(W * dpr) || tl.height !== Math.round(H * dpr)) { tl.width = W * dpr; tl.height = H * dpr; }
+  const c = tl.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  const T = lastT(); if (!status || T <= 0) return;
+  // loaded chunks
+  c.fillStyle = "rgba(236,229,207,.09)";
+  for (const i of chunks.keys()) { const a = tlX(i * chunkS()), b = tlX(Math.min(T, (i + 1) * chunkS())); c.fillRect(a, 6, Math.max(1, b - a), H - 12); }
+  // minute ticks and labels
+  const span = T / 60, every = span > 240 ? 60 : span > 90 ? 30 : span > 40 ? 10 : span > 12 ? 5 : 1;
+  c.fillStyle = "#a7a28b"; c.font = "11px 'Alegreya Sans', sans-serif"; c.textAlign = "center";
+  for (let m = 0; m * 60 <= T; m += every) { const x = tlX(m * 60); c.fillRect(x, H - 9, 1, 4); if (m) c.fillText(`${m}`, x, H - 12); }
+  c.textAlign = "left";
+  // events
+  const COLOR = { death: "#d9564a", born: "#98bd6c", web_stuck: "#f0b54c", drink: "#86b5d1" };
+  for (const e of events) {
+    const kind = e.kind.startsWith("death_") ? "death" : e.kind;
+    const col = COLOR[kind]; if (!col) continue;
+    const tall = kind === "death" || kind === "born";
+    c.fillStyle = col; c.fillRect(tlX(e.t) - (tall ? 1 : .5), tall ? 4 : 12, tall ? 2 : 1, tall ? 16 : 8);
+  }
+  // playhead
+  if (simT != null) { const x = tlX(simT); c.fillStyle = "#ece5cf"; c.fillRect(x - 1, 2, 2, H - 4);
+    c.font = "12px 'Alegreya Sans', sans-serif"; const label = fmt(simT); const w = c.measureText(label).width + 8;
+    const lx = Math.min(W - w - 2, Math.max(2, x - w / 2)); c.fillStyle = "rgba(20,26,18,.9)"; c.fillRect(lx, 2, w, 15); c.fillStyle = "#ece5cf"; c.fillText(label, lx + 4, 13); }
+}
 $("smell").onclick = () => { smellMode = !smellMode; $("smell").classList.toggle("on", smellMode); };
 $("follow").onclick = () => { follow = !follow && selected != null; $("follow").classList.toggle("on", follow); if (!follow && selected == null) toast("Сначала выберите муху"); };
 const TOOL_HINT = { fly: "Кликните на земле — туда выпустим новую муху (пока есть свободные мозги)", fruit: "Зажмите на земле: чем дольше держите, тем крупнее плод",
@@ -311,7 +396,7 @@ const TOOL_TEXT = {
   spider: { fail: "Не удалось выпустить паука", late: "Паук появится", now: "Паук спускается…", full: "Пауков уже 4 — больше нельзя" },
 };
 async function place(g) {
-  const tool = g.tool, text = TOOL_TEXT[tool], last = frames[frames.length - 1];
+  const tool = g.tool, text = TOOL_TEXT[tool], last = frameAt(lastT())?.[0];
   if (tool === "fly" && last && last.flies.length >= (meta.max_flies || Infinity)) { toast(text.full); return; }
   if (tool !== "fruit" && tool !== "fly" && last && (tool === "spider" ? last.spiders : last.centipedes || []).length >= MAX_RELEASED) { toast(text.full); return; }
   const body = { type: tool, x: g.x, y: g.y };
@@ -750,7 +835,8 @@ const firstSeen = new Map();   // fruit id -> time it appeared (for the fall ani
 let drawnOnce = false;
 function draw(now = performance.now()) {
   const dtw = Math.min(0.1, (now - last) / 1000); last = now;
-  if (frames.length && simT != null && playing) simT = Math.min(simT + dtw * +$("speed").value, frames[frames.length - 1].t);
+  if (status && simT != null && playing && !tlDrag) simT = Math.min(simT + dtw * +$("speed").value, lastT());
+  drawTimeline();
   const W = view.clientWidth, H = view.clientHeight, dpr = devicePixelRatio || 1;
   if (view.width !== Math.round(W * dpr) || view.height !== Math.round(H * dpr)) { view.width = W * dpr; view.height = H * dpr; }
   const c = view.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -897,7 +983,7 @@ function draw(now = performance.now()) {
       for (const e of f.eggs || []) if (e[3] === selected) { const [ox, oy] = S(e[0], e[1]); c.beginPath(); c.moveTo(mx, my); c.lineTo(ox, oy); c.stroke(); }
       c.setLineDash([]);
       // trail
-      const pts = []; for (let i = Math.max(0, fi - 20 * 40); i <= fi; i += 2) { const q = frames[i].flies.find(z => z[0] === selected); if (q) pts.push(q); }
+      const pts = []; for (const fr of history(simT, 40, 2)) { const q = fr.flies.find(z => z[0] === selected); if (q) pts.push(q); }
       c.lineCap = "round";
       for (let i = 1; i < pts.length; i++) {
         const air = pts[i][4] === 3; const [ax, ay] = S(pts[i - 1][1], pts[i - 1][2]), [bx, by] = S(pts[i][1], pts[i][2]);
@@ -1073,6 +1159,7 @@ function pick(ox, oy) {
 let panelAge = 0;
 function panel(f, fi) {
   if (performance.now() - panelAge < 120) return; panelAge = performance.now();
+  $("card").hidden = selected == null;
   if (selected == null) { $("caption").hidden = true; return; }
   const q = f.flies.find(z => z[0] === selected);
   $("flyTitle").textContent = `Муха №${selected}`;
@@ -1109,8 +1196,8 @@ function caption(fi) {
   // a chain of measured changes over the last ~4 s for the selected fly
   const items = [], names = meta.readout, r = n => names.indexOf(n);
   let prev = null;
-  for (let i = Math.max(0, fi - 80); i <= fi; i += 2) {
-    const q = frames[i].flies.find(z => z[0] === selected); if (!q) continue;
+  for (const fr of history(simT, 4, 2)) {
+    const q = fr.flies.find(z => z[0] === selected); if (!q) continue;
     const s = q[12] || [], v = q[7];
     if (prev) {
       const ps = prev[12] || [], pv = prev[7];
@@ -1139,7 +1226,8 @@ for (const b of document.querySelectorAll("button.tab")) b.onclick = () => {
   tab = b.dataset.tab;
   for (const x of document.querySelectorAll("button.tab")) { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", on); }
   $("feed").hidden = tab !== "feed"; $("flylist").hidden = tab !== "flies";
-  flyListAt = 0;
+  $("obitpanel").hidden = tab !== "obit"; $("stats").hidden = tab !== "stats";
+  flyListAt = 0; if (tab === "stats") drawPop();
 };
 function renderFlyList(f) {
   if (tab !== "flies" || performance.now() - flyListAt < 500) return; flyListAt = performance.now();
@@ -1160,7 +1248,7 @@ function renderFlyList(f) {
   $("flylist").querySelectorAll("li[data-dead]").forEach(li => li.onclick = () => {
     const e = deaths.find(d => d.fly === +li.dataset.dead); selected = e.fly; follow = false; $("follow").classList.remove("on");
     if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 6); camera.clamp(); }
-    if (frames.length && e.t - 6 >= frames[0].t) simT = e.t - 6;
+    seek(e.t - 6);
     flyListAt = 0; renderFeed();
   });
 }
@@ -1175,7 +1263,7 @@ function renderFeed() {
     `<li class="dim">Пока тихо.</li>`;
   $("feed").querySelectorAll("li[data-i]").forEach(li => li.onclick = () => {
     const e = list[+li.dataset.i]; if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 5); camera.clamp(); }
-    if (e.fly >= 0) selected = e.fly; if (simT != null && e.t < simT && frames.length && e.t >= frames[0].t) simT = e.t - 2;
+    if (e.fly >= 0) selected = e.fly; if (simT != null && e.t < simT) seek(e.t - 2);
   });
 }
 
@@ -1197,7 +1285,7 @@ function renderObit() {
   $("obit").querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = () => {
     const e = deaths[+tr.dataset.i]; selected = e.fly;
     if (e.x != null) { camera.cx = e.x; camera.cy = e.y; camera.z = Math.max(camera.z, 6); camera.clamp(); }
-    if (frames.length && e.t - 6 >= frames[0].t) simT = e.t - 6;
+    seek(e.t - 6);
     view.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 }
@@ -1205,20 +1293,27 @@ function renderObit() {
 // ============ census ============
 function drawPop() {
   const cv2 = $("pop"), dpr = devicePixelRatio || 1, W = cv2.clientWidth, H = 170;
+  if (!W) return;
   cv2.width = W * dpr; cv2.height = H * dpr; const c = cv2.getContext("2d"); c.scale(dpr, dpr);
-  if (!frames.length) return;
-  const step = Math.max(1, Math.floor(frames.length / W)), pts = []; for (let i = 0; i < frames.length; i += step) pts.push(frames[i]);
-  const maxN = Math.max(8, ...pts.map(f => f.flies.length)), X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
+  // the run writes census.jsonl (one row per chunk: flies alive, mean genes); older runs: whatever chunks are loaded
+  let pts = census.length ? census.map(r => ({ t: r.t, n: r.alive, genes: r.genes }))
+    : [...chunks.keys()].sort((a, b) => a - b).map(i => chunks.get(i)[0]).map(f => ({ t: f.t, n: f.flies.length,
+        genes: f.flies.length ? (meta?.genes || []).map((_, gi) => f.flies.reduce((a, q) => a + q[10][gi], 0) / f.flies.length) : null }));
+  if (!pts.length) return;
+  const step = Math.max(1, Math.floor(pts.length / W)); pts = pts.filter((_, i) => i % step === 0);
+  const maxN = Math.max(8, ...pts.map(p => p.n)), X = i => 30 + i / Math.max(1, pts.length - 1) * (W - 40);
   c.strokeStyle = "#34402f"; c.fillStyle = "#a7a28b"; c.font = "12px 'Alegreya Sans', sans-serif";
   for (const v of [.5, 1, 1.5]) { const y = H - 10 - v / 2 * (H - 24); c.beginPath(); c.moveTo(30, y); c.lineTo(W - 10, y); c.stroke(); c.fillText(`×${v}`, 2, y + 4); }
-  c.fillStyle = "rgba(236,229,207,.1)"; pts.forEach((f, i) => { const h = f.flies.length / maxN * (H - 24); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
+  c.fillStyle = "rgba(236,229,207,.1)"; pts.forEach((p, i) => { const h = p.n / maxN * (H - 24); c.fillRect(X(i), H - 10 - h, Math.max(1, (W - 40) / pts.length), h); });
   (meta?.genes || []).forEach((gname, gi) => {
-    c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath();
-    pts.forEach((f, i) => { if (!f.flies.length) return; const m = f.flies.reduce((a, q) => a + q[10][gi], 0) / f.flies.length;
-      const y = H - 10 - Math.min(2, m) / 2 * (H - 24); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); });
+    c.strokeStyle = GENE_COLORS[gi]; c.lineWidth = 1.5; c.beginPath(); let started = false;
+    pts.forEach((p, i) => { if (!p.genes) { started = false; return; } const m = p.genes[gi];
+      const y = H - 10 - Math.min(2, m) / 2 * (H - 24); started ? c.lineTo(X(i), y) : c.moveTo(X(i), y); started = true; });
     c.stroke(); c.fillStyle = GENE_COLORS[gi]; c.fillText(GENE_RU[gname], 40 + gi * 70, 13);
   });
-  c.fillStyle = "#a7a28b"; c.fillText(`светлые столбики — число мух, максимум ${maxN}`, W - 260, 13);
+  if (simT != null && pts.length > 1) { const T = pts[pts.length - 1].t || 1; const x = 30 + Math.min(1, simT / T) * (W - 40);
+    c.fillStyle = "rgba(236,229,207,.6)"; c.fillRect(x, 14, 1, H - 24); }
+  c.fillStyle = "#a7a28b"; c.fillText(`светлые столбики — число мух за весь прогон, максимум ${maxN}`, W - 300, 13);
 }
 
 addEventListener("resize", () => camera.clamp());
