@@ -842,7 +842,7 @@ function draw(now = performance.now()) {
   const c = view.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const got = meta && ground && frameAt(simT);
   if (!got) { c.fillStyle = "#1c2419"; c.fillRect(0, 0, W, H); c.fillStyle = "#a7a28b"; c.font = "17px 'Alegreya Sans', sans-serif";
-    c.fillText(meta && !meta.arena.nest ? "Этот прогон из старой версии мира — выберите новый прогон вверху" : "Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
+    c.fillText(meta && !meta.arena.nest ? "Этот прогон из старой версии мира — выберите новый прогон вверху" : status?.chunks ? "Загружаю запись…" : "Жду первые кадры симуляции…", 24, 36); requestAnimationFrame(draw); return; }
   const [f, g, k, fi] = got, z = camera.z, t = now / 1000, L = f.light;
   if (follow && selected != null) { const q = f.flies.find(q => q[0] === selected); if (q) { camera.cx += (q[1] - camera.cx) * 0.15; camera.cy += (q[2] - camera.cy) * 0.15; camera.clamp(); } }
   const S = (x, y) => camera.toScreen(x, y);

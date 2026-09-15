@@ -111,6 +111,8 @@ class LifeConfig:
     groom_clean: float = 0.25     # dust removed per s of grooming
     hop: tuple = (0.25, 100.0)    # s, mm/s of a giant-fiber hop
     flight: tuple = (1.6, 70.0)   # s, mm/s of a long-mode flight
+    saccade_rate: float = 2.5     # per s in flight: body saccades (real flies turn ~90 deg a few times a second)
+    saccade_angle: tuple = (0.5, 1.6)   # rad, size of a saccade
     web_escape: float = 1.3       # escape force needed to tear free (fresh web: 2-3 takeoff attempts)
     struggle: float = 0.10        # escape force per s a stuck fly gains by struggling (fresh web alone: ~19 s)
     escape_decay: float = 0.03    # escape force lost per s
@@ -620,6 +622,12 @@ class Life:
         walking = ~airborne & ~stuck & ~coma
         self.heading[walking] += (turn * dt + cfg.wander * np.sqrt(dt) * self.rng.normal(0, 1, B))[walking]
         self.heading[stuck] += self.rng.normal(0, 0.15, stuck.sum())       # struggling
+        # flight is straight segments joined by body saccades (no steering in the air: the brain's flight
+        # circuits are not read); hops stay straight
+        sacc = airborne & (self.air_height >= 1.0) & (self.rng.random(B) < cfg.saccade_rate * dt)
+        n_sacc = int(sacc.sum())
+        if n_sacc:
+            self.heading[sacc] += self.rng.choice([-1.0, 1.0], n_sacc) * self.rng.uniform(*cfg.saccade_angle, n_sacc)
 
         W, H = ar.cfg.width, ar.cfg.height
         nx = self.x + speed * np.cos(self.heading) * dt
