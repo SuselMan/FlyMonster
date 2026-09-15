@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flysim import config  # noqa: E402
 from flysim.life.sim import GENES, READOUT, SENSES, WORLD_DT, Life, LifeConfig  # noqa: E402
+from flysim.physiology import PRESETS  # noqa: E402
 
 FRAME_EVERY = 5      # world steps (50 ms)
 CHUNK_S = 10.0
@@ -33,6 +34,7 @@ def main():
     ap.add_argument("--biome", choices=["orchard", "marsh", "rocky", "meadow"], default=None, help="force the special biome")
     ap.add_argument("--map", choices=["generated", "classic"], default="generated", help="classic: the old fixed layout")
     ap.add_argument("--as-fast-as-possible", action="store_true", help="do not hold the simulation to real time")
+    ap.add_argument("--physiology", choices=list(PRESETS), default="default", help="brain physiology preset (mb: living mushroom body)")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
@@ -43,7 +45,8 @@ def main():
     for name in ("events.jsonl", "commands.jsonl"):
         (out / name).unlink(missing_ok=True)
 
-    cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed)
+    cfg = LifeConfig(n_flies=args.flies, max_flies=args.max_flies or args.flies + 2, seed=args.seed,
+                     physiology=PRESETS[args.physiology])
     cfg.arena.map, cfg.arena.map_seed, cfg.arena.biome = args.map, args.map_seed, args.biome
     life = Life(cfg)
     (out / "meta.json").write_text(json.dumps({

@@ -33,6 +33,7 @@ class Physiology:
     std_u: float = 0.0             # short-term depression (see LIFParams)
     std_tau: float = 300.0
     kc_cholinergic: bool = False   # Kenyon cell outputs stay fast excitation whatever top_nt says
+    pn_kc: float = 1.0             # scale of excitatory projection neuron -> Kenyon cell synapses
 
     def lif(self, dt: float = 0.5) -> LIFParams:
         return LIFParams(dt=dt, std_u=self.std_u, std_tau=self.std_tau)
@@ -44,6 +45,10 @@ ORIGINAL = Physiology()
 # vision->DNb05) while changing the fewest synapses. STD is off: even U=0.03
 # weakened projection neuron -> Kenyon cell drive (68 vs 416 KCs for one odor).
 DEFAULT = Physiology(modulators_fast=0.0, al_exc_ln=0.25, std_u=0.0)
+# DEFAULT with a living mushroom body (scripts/mb_revive_scan.py, mb_causal_scan.py --kc-cholinergic --pn-kc 2):
+# an odor activates 7.5 % of Kenyon cells sparsely, MBONs fire, KC->MBON changes reach steering DNs.
+MB = Physiology(modulators_fast=0.0, al_exc_ln=0.25, std_u=0.0, kc_cholinergic=True, pn_kc=2.0)
+PRESETS = {"original": ORIGINAL, "default": DEFAULT, "mb": MB}
 
 
 def neuron_meta(con: connectome.Connectome) -> pd.DataFrame:
@@ -65,7 +70,7 @@ def neuron_meta(con: connectome.Connectome) -> pd.DataFrame:
 
 def apply(con: connectome.Connectome, phys: Physiology, meta: pd.DataFrame | None = None) -> connectome.Connectome:
     """Return a connectome with scaled synapses (rows = presynaptic neurons)."""
-    if phys.modulators_fast == 1.0 and phys.al_exc_ln == 1.0:
+    if phys.modulators_fast == 1.0 and phys.al_exc_ln == 1.0 and phys.pn_kc == 1.0:
         return con
     meta = neuron_meta(con) if meta is None else meta
     w = con.weights
@@ -79,8 +84,13 @@ def apply(con: connectome.Connectome, phys: Physiology, meta: pd.DataFrame | Non
     val[modulator] *= phys.modulators_fast
     # The sign in the connectivity table does not always follow top_nt, so the
     # AL override acts on the actual excitatory weights of local neurons.
-    ln = torch.repeat_interleave(torch.from_numpy((meta.cell_class.fillna("") == "ALLN").to_numpy()), counts)
+    cls = meta.cell_class.fillna("").to_numpy()
+    ln = torch.repeat_interleave(torch.from_numpy(cls == "ALLN"), counts)
     val[ln & (val > 0)] *= phys.al_exc_ln
+    if phys.pn_kc != 1.0:
+        pn = torch.repeat_interleave(torch.from_numpy(cls == "ALPN"), counts)
+        kc_post = torch.from_numpy(cls == "Kenyon_Cell")[col]
+        val[pn & kc_post & (val > 0)] *= phys.pn_kc
     # drop synapses scaled to zero: identical dynamics, but spikes of e.g. octopamine neurons no longer
     # generate thousands of zero-weight events per spike
     keep = val != 0
