@@ -7,7 +7,10 @@ can be captured once and replayed with a single call:
 - spike delivery uses fixed-size buffers (at most `max_spikes` spiking
   neurons and `max_events` synaptic events per step, across the batch);
   an overflow flag is kept on the GPU and checked once per block;
-- the batch size is fixed; unused columns simply receive no input.
+- the batch size is fixed; unused columns simply receive no input;
+- optional per-brain plasticity: a chosen set of synapses carries a multiplier per brain
+  (`enable_plasticity`), read by both delivery kernels; the multipliers live in `self.m` and are
+  changed in place outside the graph (flysim/plasticity.py).
 
 Replaying removes the per-operation launch and synchronisation overhead,
 which dominates when activity is sparse.
@@ -30,6 +33,7 @@ if _LIF is not None:
     _FILL = cupy.RawKernel(r"""
     extern "C" __global__ void fill(const long long* pre, const long long* col, const long long* off,
                                     const long long* crow, const long long* post, const float* w,
+                                    const int* pmap, const float* m,
                                     long long* tgt, float* wout, const int k, const int batch, const long long emax) {
         long long e = (long long)blockDim.x * blockIdx.x + threadIdx.x;
         if (e >= emax) return;
@@ -39,7 +43,8 @@ if _LIF is not None:
         long long before = lo > 0 ? off[lo - 1] : 0;
         long long s = crow[pre[lo]] + (e - before);
         tgt[e] = post[s] * batch + col[lo];
-        wout[e] = w[s];
+        int p = pmap[s];
+        wout[e] = p >= 0 ? w[s] * m[(long long)p * batch + col[lo]] : w[s];
     }
     """, "fill")
 
@@ -51,8 +56,8 @@ if _LIF is not None:
     # and there is no fixed-size event buffer to scan every step.
     _DELIVER = cupy.RawKernel(r"""
     extern "C" __global__ void deliver(const long long* pre, const long long* colstart, const long long* crow,
-                                       const long long* post, const float* w, float* g,
-                                       const int batch, const long long kmax) {
+                                       const long long* post, const float* w, const int* pmap, const float* m,
+                                       float* g, const int batch, const long long kmax) {
         int c = blockDim.x * blockIdx.x + threadIdx.x;
         if (c >= batch) return;
         long long k0 = colstart[c], k1 = colstart[c + 1];
@@ -60,7 +65,10 @@ if _LIF is not None:
         for (long long k = k0; k < k1; k++) {
             long long i = pre[k];
             long long s1 = crow[i + 1];
-            for (long long s = crow[i]; s < s1; s++) g[post[s] * batch + c] += w[s];
+            for (long long s = crow[i]; s < s1; s++) {
+                int p = pmap[s];
+                g[post[s] * batch + c] += p >= 0 ? w[s] * m[(long long)p * batch + c] : w[s];
+            }
         }
     }
     """, "deliver")
@@ -90,6 +98,9 @@ class FastBrain:
         self.post = w.col_indices().to(self.dev)
         self.w = (w.values() * p.w_syn).to(self.dev)
         self.nnz = self.w.numel()
+        # plasticity: pmap[s] = row of the multiplier table for synapse s (-1: fixed weight)
+        self.pmap = torch.full((self.nnz,), -1, dtype=torch.int32, device=self.dev)
+        self.m = torch.ones(1, batch, device=self.dev)
         self.input_idx, self.read_idx, self.bias_idx = input_idx.to(self.dev), read_idx.to(self.dev), bias_idx.to(self.dev)
         shape = (self.n, batch)
         self.v = torch.full(shape, p.v_0, device=self.dev)
@@ -116,7 +127,19 @@ class FastBrain:
             self._cp_s = [cupy.from_dlpack(self.spike_buf[s]) for s in range(self.delay_steps)]
             self._cp_crow, self._cp_post = cupy.from_dlpack(self.crow), cupy.from_dlpack(self.post)
             self._cp_w = cupy.from_dlpack(self.w)
+            self._cp_pmap, self._cp_m = cupy.from_dlpack(self.pmap), cupy.from_dlpack(self.m)
             self._alloc_events()
+
+    def enable_plasticity(self, syn: torch.Tensor):
+        """Give synapses `syn` (indices into the CSR values) a multiplier per brain: self.m[k, b] for
+        syn[k] in brain b, initially 1. Call before the first run (the graph reads these buffers)."""
+        assert self.graph is None, "enable plasticity before the graph is captured"
+        syn = syn.to(self.dev, torch.long)
+        self.pmap.fill_(-1)
+        self.pmap[syn] = torch.arange(len(syn), dtype=torch.int32, device=self.dev)
+        self.m = torch.ones(len(syn), self.batch, device=self.dev)
+        if self.use_kernel:
+            self._cp_pmap, self._cp_m = cupy.from_dlpack(self.pmap), cupy.from_dlpack(self.m)
 
     def _alloc_events(self):
         self.events = torch.arange(self.max_events, device=self.dev)
@@ -135,7 +158,8 @@ class FastBrain:
             pre = flat % n
             colstart = torch.cat([self._zero1, torch.cumsum(self.spike_buf[slot].sum(0), 0)])
             _DELIVER(((B + 63) // 64,), (64,), (self._cp(pre), self._cp(colstart), self._cp_crow, self._cp_post,
-                                               self._cp_w, self._cp_gflat, cupy.int32(B), cupy.int64(self.max_spikes)))
+                                               self._cp_w, self._cp_pmap, self._cp_m, self._cp_gflat, cupy.int32(B),
+                                               cupy.int64(self.max_spikes)))
             sp_over = (colstart[-1] > self.max_spikes).float()
             self.overflow_kind.copy_(torch.maximum(self.overflow_kind, torch.stack([self._zero_f, sp_over])))
             self.overflow.copy_(torch.maximum(self.overflow, sp_over))
@@ -148,8 +172,8 @@ class FastBrain:
             off = torch.cumsum(cnt, 0)
             K, E = self.max_spikes, self.max_events
             _FILL(((E + 1023) // 1024,), (1024,), (self._cp(pre), self._cp(col), self._cp(off), self._cp_crow,
-                                                    self._cp_post, self._cp_w, self._cp_tgt, self._cp_wout,
-                                                    cupy.int32(K), cupy.int32(B), cupy.int64(E)))
+                                                    self._cp_post, self._cp_w, self._cp_pmap, self._cp_m,
+                                                    self._cp_tgt, self._cp_wout, cupy.int32(K), cupy.int32(B), cupy.int64(E)))
             self.g.view(-1).index_add_(0, self.ev_tgt, self.ev_w)
             # overflow: more events than the buffer, or the spike list is full (its last entry is real)
             ev_over, sp_over = (off[-1] > E).float(), (flat[-1] < n * B).float()
@@ -166,7 +190,10 @@ class FastBrain:
         j = torch.searchsorted(off, self.events, right=True).clamp(max=self.max_spikes - 1)
         syn = (start[j] + self.events - (off[j] - cnt[j])).clamp(max=self.nnz - 1)
         valid = self.events < total
-        self.g.view(-1).index_add_(0, self.post[syn] * B + col[j], self.w[syn] * valid)
+        wv = self.w[syn] * valid
+        pj = self.pmap[syn].long()
+        wv = torch.where(pj >= 0, wv * self.m[pj.clamp(min=0), col[j]], wv)
+        self.g.view(-1).index_add_(0, self.post[syn] * B + col[j], wv)
         ev_over, sp_over = (total > self.max_events).float(), (arriving.sum() > self.max_spikes).float()
         self.overflow_kind.copy_(torch.maximum(self.overflow_kind, torch.stack([ev_over, sp_over])))
         self.overflow.copy_(torch.maximum(self.overflow, torch.maximum(ev_over, sp_over)))
@@ -228,6 +255,7 @@ class FastBrain:
 
     # --- state management (outside the graph, in place) ----------------------
     def reset_all(self):
+        self.m.fill_(1.0)
         self.v.fill_(self.p.v_0)
         self.g.zero_()
         self.refrac.zero_()
@@ -239,5 +267,6 @@ class FastBrain:
         cols = torch.as_tensor(cols, device=self.dev, dtype=torch.long)
         self.v[:, cols] = self.p.v_0
         self.g[:, cols] = 0
+        self.m[:, cols] = 1.0                       # a fresh brain has no memories
         self.refrac[:, cols] = 0
         self.spike_buf[:, :, cols] = False

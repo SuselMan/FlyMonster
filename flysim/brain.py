@@ -41,6 +41,8 @@ class FlyBrain:
         self.crow = w.crow_indices().to(self.device)
         self.post = w.col_indices().to(self.device)
         self.w = (w.values() * self.p.w_syn).to(self.device)
+        self.pmap = None                     # plasticity: see enable_plasticity
+        self.m = None
         self.delay_steps = max(1, round(self.p.t_dly / self.p.dt))
         self.refrac_steps = max(1, round(self.p.t_rfc / self.p.dt))
         self.g_decay = math.exp(-self.p.dt / self.p.tau)
@@ -58,6 +60,8 @@ class FlyBrain:
             self.spike_buf = torch.zeros((self.delay_steps, *shape), dtype=torch.bool, device=dev)
             # Synaptic resources for short-term depression (None when disabled).
             self.x = torch.ones(shape, device=dev) if self.p.std_u > 0 else None
+            if self.m is not None:
+                self.m = torch.ones(self.m.shape[0], self.batch, device=dev)
             self.t = 0
             return
         self.v[:, which] = self.p.v_0
@@ -66,6 +70,15 @@ class FlyBrain:
         self.spike_buf[:, :, which] = False
         if self.x is not None:
             self.x[:, which] = 1.0
+        if self.m is not None:
+            self.m[:, which] = 1.0
+
+    def enable_plasticity(self, syn: torch.Tensor):
+        """Synapses `syn` (CSR value indices) get a multiplier per brain, self.m[k, b], initially 1."""
+        syn = syn.to(self.device, torch.long)
+        self.pmap = torch.full((self.w.numel(),), -1, dtype=torch.long, device=self.device)
+        self.pmap[syn] = torch.arange(len(syn), device=self.device)
+        self.m = torch.ones(len(syn), self.batch, device=self.device)
 
     def resize(self, batch: int):
         """Change batch size (resets state); weights stay on the device."""
@@ -82,6 +95,8 @@ class FlyBrain:
                                                                 device=dev)], 2).contiguous()
         if self.x is not None:
             self.x = torch.cat([self.x, torch.ones(self.n, n, device=dev)], 1).contiguous()
+        if self.m is not None:
+            self.m = torch.cat([self.m, torch.ones(self.m.shape[0], n, device=dev)], 1).contiguous()
         self.batch += n
 
     def keep(self, cols: torch.Tensor):
@@ -93,6 +108,8 @@ class FlyBrain:
         self.spike_buf = self.spike_buf[:, :, cols].contiguous()
         if self.x is not None:
             self.x = self.x[:, cols].contiguous()
+        if self.m is not None:
+            self.m = self.m[:, cols].contiguous()
         self.batch = len(cols)
 
     def step(self, input_idx: torch.Tensor | None = None,
@@ -151,8 +168,12 @@ class FlyBrain:
             return
         offsets = torch.cumsum(counts, 0) - counts
         syn = torch.repeat_interleave(starts - offsets, counts) + torch.arange(total, device=self.device)
-        flat = self.post[syn] * self.batch + torch.repeat_interleave(col, counts)
+        cols = torch.repeat_interleave(col, counts)
+        flat = self.post[syn] * self.batch + cols
         w = self.w[syn]
+        if self.m is not None:
+            pj = self.pmap[syn]
+            w = torch.where(pj >= 0, w * self.m[pj.clamp(min=0), cols], w)
         if self.x is not None:
             # Depression: this release uses the current resource, then depletes it.
             eff = self.x[pre, col]
